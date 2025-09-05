@@ -23,7 +23,12 @@ impl Sphere {
     }
 }
 
-pub fn depth_to_gamma(depth: f32, min_depth: f32, max_depth: f32, gamma: f32) -> f32 {
+pub fn depth_to_gamma(
+    depth:     f32,
+    min_depth: f32,
+    max_depth: f32,
+    gamma:     f32,
+) -> f32 {
     // 1. normalize
     let t = (depth - min_depth) / (max_depth - min_depth);
     // 2. clamp
@@ -33,145 +38,102 @@ pub fn depth_to_gamma(depth: f32, min_depth: f32, max_depth: f32, gamma: f32) ->
 }
 
 /// If you’d like an 8‐bit value instead of f32, you can do:
-pub fn depth_to_u32(depth: f32, min_depth: f32, max_depth: f32, gamma: f32) -> u32 {
+pub fn depth_to_u32(
+    depth:     f32,
+    min_depth: f32,
+    max_depth: f32,
+    gamma:     f32,
+) -> u32 {
     let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
     // scale to 0..255, round to nearest and cast
     (v * 255.0).round().clamp(0.0, 255.0) as u32
 }
 
+
 fn main() {
-    // A flat buffer of WIDTH * HEIGHT pixels (u32 = 0xAARRGGBB)
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
+
     let mut window = Window::new(
         "My Rust Framebuffer",
         WIDTH,
         HEIGHT,
         WindowOptions::default(),
-    )
-    .unwrap();
+    ).unwrap();
 
-    // ─── CAMERA STATE ───────────────────────────────────────────────
-    let mut cam_pos = Vec3::new(0.0, 0.0, 0.0);
-    let mut yaw = 0.0f32; // left/right
-    let mut pitch = 0.0f32; // up/down
-    let world_up = Vec3::new(0.0, 1.0, 0.0);
-
-    // For frame‐rate independent movement:
-    let mut last_frame = Instant::now();
-
-    // ─── FPS COUNTER STATE ───────────────────────────────────────────
-    let mut last_fps_time = Instant::now();
+    let mut last_instant = Instant::now();
     let mut frame_count = 0u32;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        // ——— 1) compute dt ————————————————————————————————
-        let now = Instant::now();
-        let dt = (now - last_frame).as_secs_f32();
-        last_frame = now;
-
-        // ——— 2) build camera basis vectors ————————————————————
-        // forward vector from yaw & pitch (spherical coords → cartesian)
-        let forward = Vec3::new(
-            pitch.cos() * yaw.cos(),
-            pitch.sin(),
-            pitch.cos() * yaw.sin(),
-        )
-        .normalize();
-
-        // right and recalculated up
-        let right = forward.cross(world_up).normalize();
-        let cam_up = right.cross(forward).normalize();
-
-        // ——— 3) handle movement keys ————————————————————————
-        let speed = 5.0; // world units per second
-        if window.is_key_down(Key::W) {
-            cam_pos = cam_pos + forward * speed * dt;
-        }
-        if window.is_key_down(Key::S) {
-            cam_pos = cam_pos - forward * speed * dt;
-        }
-        if window.is_key_down(Key::D) {
-            cam_pos = cam_pos + right * speed * dt;
-        }
-        if window.is_key_down(Key::A) {
-            cam_pos = cam_pos - right * speed * dt;
-        }
-        if window.is_key_down(Key::Space) {
-            cam_pos = cam_pos + world_up * speed * dt;
-        }
-        if window.is_key_down(Key::LeftShift) {
-            cam_pos = cam_pos - world_up * speed * dt;
-        }
-
-        // ——— 4) handle look (yaw/pitch) keys ————————————————————
-        let rot_speed = 1.2; // radians per second
-        if window.is_key_down(Key::Left) {
-            yaw -= rot_speed * dt;
-        }
-        if window.is_key_down(Key::Right) {
-            yaw += rot_speed * dt;
-        }
-        if window.is_key_down(Key::Up) {
-            pitch = (pitch + rot_speed * dt).clamp(
-                -std::f32::consts::FRAC_PI_2 + 0.01,
-                std::f32::consts::FRAC_PI_2 - 0.01,
-            );
-        }
-        if window.is_key_down(Key::Down) {
-            pitch = (pitch - rot_speed * dt).clamp(
-                -std::f32::consts::FRAC_PI_2 + 0.01,
-                std::f32::consts::FRAC_PI_2 - 0.01,
-            );
-        }
-
-        // ─── 5) ray‐march loop ────────────────────────────────────────
-        let sphere = Sphere::new(10.0, Vec3::new(0.0, 0.0, 20.0));
-        let screen_dist = 1.0;
+        let screen_distance = 1.0;
         let screen_width = 5.0;
-        let min_d: f32 = 1e-3;
-        let max_d: f32 = 1e3;
+        let sphere = Sphere { radius: 10.0, pos: Vec3 {x: 0.0, y:0.0, z:20.0 }};
+        let mut cam_pos = Vec3 {x:0.0, y: 0.0, z:0.0};
+        let look_pos = Vec3 {x:0.0, y:0.0, z:1.0};
+        let up = Vec3 {x: 0.0, y: 1.0, z:0.0};
+        let min_d:f32 = 1e-3;
+        let max_d:f32 = 1e3;
 
+        // Fill the buffer with some pattern
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
-                // build point on screen plane in world‐space
-                let screen_center = cam_pos + forward * screen_dist;
+                // Get point on screen.
+                let look_dir = (look_pos - cam_pos).normalize();
+                let screen_pos = cam_pos+look_dir*screen_distance;
+                let screen_y = up;
+                let screen_x = look_dir.cross(up);
+                let screen_x_pos = ((x as f32 - WIDTH as f32/2.0) / WIDTH as f32) * screen_width;
+                let screen_y_pos = ((y as f32 - HEIGHT as f32/2.0) / HEIGHT as f32) * screen_width;
+                let pixel_pos = screen_pos + screen_x * screen_x_pos + screen_y * screen_y_pos;
+                let cast_dir = (pixel_pos-cam_pos).normalize();
 
-                let sx = ((x as f32 / WIDTH as f32) - 0.5) * screen_width;
-                let sy = ((y as f32 / HEIGHT as f32) - 0.5) * screen_width;
-                let pixel_pos = screen_center + right * sx + cam_up * sy;
-
-                let cast_dir = (pixel_pos - cam_pos).normalize();
-
-                // ray‐march
                 let mut total_dist = 0.0;
                 let mut dist = sphere.distance_to(cam_pos);
-                let mut pos = cam_pos;
-                while dist > min_d && dist < max_d {
+                let mut pos = cam_pos.clone();
+                while (dist > min_d) && (dist < max_d) {
                     total_dist += dist;
                     pos = pos + cast_dir * dist;
                     dist = sphere.distance_to(pos);
                 }
 
-                let r = depth_to_u32(total_dist, 0.0, 30.0, 2.2);
+                let r = depth_to_u32(total_dist, 0.0, 30.0, 2.2 );
+                let (g, b) = (r, r);
                 let idx = y * WIDTH + x;
-                buffer[idx] = (255 << 24)  // alpha
-                    | (r   << 16)  // red
-                    | (r   <<  8)  // green
-                    |  r; // blue
+                // let r = ((x + y) % 256) as u32;
+                // let g = ((2 * x + y) % 256) as u32;
+                // let b = ((x + 2 * y) % 256) as u32;
+                buffer[idx] = (255 << 24) | (r << 16) | (g << 8) | b;
             }
         }
 
-        // ─── 6) FPS COUNTER & TITLE UPDATE ──────────────────────────
+        // ===== FPS COUNT & TITLE UPDATE =====
         frame_count += 1;
-        let fps_elapsed = now.duration_since(last_fps_time);
-        if fps_elapsed >= Duration::from_secs(1) {
-            let fps = frame_count as f64 / fps_elapsed.as_secs_f64();
+        let now = Instant::now();
+        let elapsed = now.duration_since(last_instant);
+
+        // update once per second
+        if elapsed >= Duration::from_secs(1) {
+            let fps = frame_count as f64 / elapsed.as_secs_f64();
+            // update window title
             window.set_title(&format!("My Rust Framebuffer — {:.2} FPS", fps));
+            // or just println!("FPS: {:.2}", fps);
+
+            // reset counters
             frame_count = 0;
-            last_fps_time = now;
+            last_instant = now;
         }
 
-        // ─── 7) BLIT TO SCREEN ───────────────────────────────────────
-        window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
+        // Feed it to the window.  Window handles vsync internally.
+        window
+            .update_with_buffer(&buffer, WIDTH, HEIGHT)
+            .unwrap();
+
+        // You can also query key events:
+        if window.is_key_pressed(Key::Space, minifb::KeyRepeat::Yes) {
+            println!("Space was pressed!");
+            cam_pos = Vec3 {y: cam_pos.y + 1.0, ..cam_pos}
+        }
+        if window.is_key_pressed(Key::LeftShift, minifb::KeyRepeat::Yes) {
+            cam_pos = Vec3 {y: cam_pos.y - 1.0, ..cam_pos}
+        }
     }
 }
