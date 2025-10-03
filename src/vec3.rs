@@ -43,6 +43,11 @@ impl Vec3 {
     pub fn min(self, x: f32) -> Vec3 {
         Vec3 {x: self.x.min(x), y: self.y.min(x), z: self.z.min(x)}
     }
+
+    pub fn reflect(self, normal: Vec3) -> Vec3 {
+        let dot = self.dot(normal);
+        self - normal * (2.0 * dot)
+    }
 }
 
 impl ops::Sub<Vec3> for Vec3 {
@@ -52,6 +57,17 @@ impl ops::Sub<Vec3> for Vec3 {
             x: self.x - v.x,
             y: self.y - v.y,
             z: self.z - v.z
+        }
+    }
+}
+
+impl ops::Neg for Vec3 {
+    type Output = Vec3;
+    fn neg(self) -> Vec3 {
+        Vec3 {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z
         }
     }
 }
