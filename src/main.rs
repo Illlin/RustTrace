@@ -1,27 +1,14 @@
 use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use vec3::Vec3;
+use shapes::{Sphere, Sdf, Union, Box};
 
 mod vec3;
+mod shapes;
 
-const WIDTH: usize = 640;
-const HEIGHT: usize = 640;
-
-struct Sphere {
-    radius: f32,
-    pos: Vec3,
-}
-
-impl Sphere {
-    fn new(radius: f32, pos: Vec3) -> Self {
-        Self { radius, pos }
-    }
-
-    fn distance_to(&self, p: Vec3) -> f32 {
-        let a = p - self.pos;
-        a.magnitude() - self.radius
-    }
-}
+const WIDTH: usize = 1280;
+const HEIGHT: usize = 1280;
+const SCREEN_MULTIPLIER: usize = 4;
 
 pub fn depth_to_gamma(
     depth:     f32,
@@ -60,45 +47,22 @@ fn main() {
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let screen_distance = 1.0;
-        let screen_width = 5.0;
-        let sphere = Sphere { radius: 10.0, pos: Vec3 {x: 0.0, y:0.0, z:20.0 }};
-        let mut cam_pos = Vec3 {x:0.0, y: 0.0, z:0.0};
+        let screen_width = 2.0;
+        let scene = Union {
+            a: Union {
+                a: Sphere { radius: 8.0, pos: Vec3 { x: 0.0, y: 11.0, z: 20.0 } },
+                b: Sphere { radius: 10.0, pos: Vec3 { x: 0.0, y: 0.0, z: 20.0 } }
+            },
+            b: Sphere { radius: 12.0, pos: Vec3 { x: 0.0, y: -12.0, z: 20.0 } }
+        };
+        // let scene = Box { sides: Vec3 { x: 10.0, y: 10.0, z: 10.0 }, pos: Vec3 { x: 0.0, y: 0.0, z: 20.0 } };
+
+        let mut cam_pos = Vec3 {x:0.0, y: 0.0, z:-10.0};
+
         let look_pos = Vec3 {x:0.0, y:0.0, z:1.0};
-        let up = Vec3 {x: 0.0, y: 1.0, z:0.0};
+        let up = Vec3 {x: 0.0, y: -1.0, z:0.0};
         let min_d:f32 = 1e-3;
-        let max_d:f32 = 1e3;
-
-        // Fill the buffer with some pattern
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                // Get point on screen.
-                let look_dir = (look_pos - cam_pos).normalize();
-                let screen_pos = cam_pos+look_dir*screen_distance;
-                let screen_y = up;
-                let screen_x = look_dir.cross(up);
-                let screen_x_pos = ((x as f32 - WIDTH as f32/2.0) / WIDTH as f32) * screen_width;
-                let screen_y_pos = ((y as f32 - HEIGHT as f32/2.0) / HEIGHT as f32) * screen_width;
-                let pixel_pos = screen_pos + screen_x * screen_x_pos + screen_y * screen_y_pos;
-                let cast_dir = (pixel_pos-cam_pos).normalize();
-
-                let mut total_dist = 0.0;
-                let mut dist = sphere.distance_to(cam_pos);
-                let mut pos = cam_pos.clone();
-                while (dist > min_d) && (dist < max_d) {
-                    total_dist += dist;
-                    pos = pos + cast_dir * dist;
-                    dist = sphere.distance_to(pos);
-                }
-
-                let r = depth_to_u32(total_dist, 0.0, 30.0, 2.2 );
-                let (g, b) = (r, r);
-                let idx = y * WIDTH + x;
-                // let r = ((x + y) % 256) as u32;
-                // let g = ((2 * x + y) % 256) as u32;
-                // let b = ((x + 2 * y) % 256) as u32;
-                buffer[idx] = (255 << 24) | (r << 16) | (g << 8) | b;
-            }
-        }
+        let max_d:f32 = 1e4;
 
         frame_count += 1;
         let now = Instant::now();
@@ -116,12 +80,40 @@ fn main() {
             .update_with_buffer(&buffer, WIDTH, HEIGHT)
             .unwrap();
 
-        if window.is_key_pressed(Key::Space, minifb::KeyRepeat::Yes) {
-            println!("Space was pressed!");
-            cam_pos = Vec3 {y: cam_pos.y + 1.0, ..cam_pos}
-        }
-        if window.is_key_pressed(Key::LeftShift, minifb::KeyRepeat::Yes) {
-            cam_pos = Vec3 {y: cam_pos.y - 1.0, ..cam_pos}
+        let render_height = HEIGHT/SCREEN_MULTIPLIER;
+        let render_width = WIDTH/SCREEN_MULTIPLIER;
+
+        for y in 0..render_height {
+            for x in 0..render_width {
+                // Get point on screen.
+                let look_dir = (look_pos - cam_pos).normalize();
+                let screen_pos = cam_pos+look_dir*screen_distance;
+                let screen_y = up;
+                let screen_x = look_dir.cross(up);
+                let screen_x_pos = ((x as f32 - render_width as f32/2.0) / render_width as f32) * screen_width;
+                let screen_y_pos = ((y as f32 - render_height as f32/2.0) / render_height as f32) * screen_width;
+                let pixel_pos = screen_pos + screen_x * screen_x_pos + screen_y * screen_y_pos;
+                let cast_dir = (pixel_pos-cam_pos).normalize();
+
+                let mut total_dist = 0.0;
+                let mut dist = scene.distance_to(cam_pos);
+                let mut pos = cam_pos.clone();
+                while (dist > min_d) && (dist < max_d) {
+                    total_dist += dist;
+                    pos = pos + cast_dir * dist;
+                    dist = scene.distance_to(pos);
+                }
+
+                let r = depth_to_u32(total_dist, 15.0, 40.0, 2.2 );
+                let (g, b) = (r, r);
+
+                for dy in 0..SCREEN_MULTIPLIER {
+                    for dx in 0..SCREEN_MULTIPLIER {
+                        let idx = (y*SCREEN_MULTIPLIER+dy) * WIDTH + x*SCREEN_MULTIPLIER+dx;
+                        buffer[idx] = (255 << 24) | (r << 16) | (g << 8) | b;
+                    }
+                }
+            }
         }
     }
 }

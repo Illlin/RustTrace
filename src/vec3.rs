@@ -31,6 +31,18 @@ impl Vec3 {
     pub(crate) fn dot(self, other: Vec3) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
+
+    pub fn abs(self) -> Vec3 {
+        Vec3 {x: self.x.abs(), y: self.y.abs(), z: self.z.abs()}
+    }
+
+    pub fn max(self, x: f32) -> Vec3 {
+        Vec3 {x: self.x.max(x), y: self.y.max(x), z: self.z.max(x)}
+    }
+
+    pub fn min(self, x: f32) -> Vec3 {
+        Vec3 {x: self.x.min(x), y: self.y.min(x), z: self.z.min(x)}
+    }
 }
 
 impl ops::Sub<Vec3> for Vec3 {
@@ -76,3 +88,4 @@ impl ops::Mul<f32> for Vec3 {
         }
     }
 }
+
