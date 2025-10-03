@@ -29,15 +29,11 @@ pub fn depth_to_gamma(
     max_depth: f32,
     gamma:     f32,
 ) -> f32 {
-    // 1. normalize
     let t = (depth - min_depth) / (max_depth - min_depth);
-    // 2. clamp
     let t = t.clamp(0.0, 1.0);
-    // 3. gamma‐correct (use 1.0 / gamma so that gamma>1 lightens midtones)
     t.powf(1.0 / gamma)
 }
 
-/// If you’d like an 8‐bit value instead of f32, you can do:
 pub fn depth_to_u32(
     depth:     f32,
     min_depth: f32,
@@ -45,7 +41,6 @@ pub fn depth_to_u32(
     gamma:     f32,
 ) -> u32 {
     let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
-    // scale to 0..255, round to nearest and cast
     (v * 255.0).round().clamp(0.0, 255.0) as u32
 }
 
@@ -105,29 +100,22 @@ fn main() {
             }
         }
 
-        // ===== FPS COUNT & TITLE UPDATE =====
         frame_count += 1;
         let now = Instant::now();
         let elapsed = now.duration_since(last_instant);
 
-        // update once per second
         if elapsed >= Duration::from_secs(1) {
             let fps = frame_count as f64 / elapsed.as_secs_f64();
-            // update window title
             window.set_title(&format!("My Rust Framebuffer — {:.2} FPS", fps));
-            // or just println!("FPS: {:.2}", fps);
 
-            // reset counters
             frame_count = 0;
             last_instant = now;
         }
 
-        // Feed it to the window.  Window handles vsync internally.
         window
             .update_with_buffer(&buffer, WIDTH, HEIGHT)
             .unwrap();
 
-        // You can also query key events:
         if window.is_key_pressed(Key::Space, minifb::KeyRepeat::Yes) {
             println!("Space was pressed!");
             cam_pos = Vec3 {y: cam_pos.y + 1.0, ..cam_pos}
