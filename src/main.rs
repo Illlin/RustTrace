@@ -3,7 +3,8 @@ use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use vec3::Vec3;
 use shapes::{Sphere, Sdf, Union, Box, SmoothUnion, Material};
-use crate::shapes::Mandelbulb;
+use crate::shapes::{Checker, Mandelbulb};
+use rayon::prelude::*;
 
 mod vec3;
 mod shapes;
@@ -33,6 +34,74 @@ pub fn depth_to_u32(
     (v).round().clamp(0.0, 255.0) as u32
 }
 
+fn get_pixel_colour(
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    scene: &impl Sdf,
+    cam_pos: Vec3,
+    screen_x: Vec3,
+    screen_y: Vec3,
+    screen_pos: Vec3,
+    screen_width: f32,
+    look_dir: Vec3,
+    light_pos: Vec3,
+) -> u32 {
+    let min_d:f32 = 1e-3;
+    let max_d:f32 = 1e2;
+
+    // Get point on screen.
+    let screen_x_pos = ((x as f32 - width as f32/2.0) / width as f32) * screen_width;
+    let screen_y_pos = ((y as f32 - height as f32/2.0) / height as f32) * screen_width;
+    let pixel_pos = screen_pos + screen_x * screen_x_pos - screen_y * screen_y_pos;
+    let cast_dir = (pixel_pos-cam_pos).normalize();
+
+    let mut total_dist = 0.0;
+    let mut dist = scene.distance_to(cam_pos);
+    let mut pos = cam_pos.clone();
+    while (dist > min_d) && (dist < max_d) {
+        total_dist += dist;
+        pos = pos + cast_dir * dist;
+        dist = scene.distance_to(pos);
+    }
+
+    let result: Vec3;
+
+    if dist < min_d {
+        let light_vec = (light_pos - pos).normalize();
+
+        let eps = 1e-2;
+        let dx = scene.distance_to(pos + Vec3::new(eps, 0.0, 0.0)) - scene.distance_to(pos - Vec3::new(eps, 0.0, 0.0));
+        let dy = scene.distance_to(pos + Vec3::new(0.0, eps, 0.0)) - scene.distance_to(pos - Vec3::new(0.0, eps, 0.0));
+        let dz = scene.distance_to(pos + Vec3::new(0.0, 0.0, eps)) - scene.distance_to(pos - Vec3::new(0.0, 0.0, eps));
+
+        let normal = Vec3 {x: dx, y: dy, z: dz}.normalize();
+
+        let mat = scene.get_material(pos);
+
+        let diffuse = normal.dot(light_vec).max(0.0);
+
+        let reflection = (light_vec).reflect(normal);
+        let specular = look_dir.dot(reflection).max(0.0).powi(32) * mat.specular;
+
+        let lightness = (specular + diffuse + 0.1)/2.1;
+
+        let gamma_lightness = depth_to_gamma(lightness, 0.0, 1.0, 2.2 );
+
+        result = mat.colour * gamma_lightness;
+    }
+    else {
+        result = Vec3 { x: 0.0, y: 0.0, z: 0.0};
+    }
+
+
+    let r = (result.x * 255.0).round() as u32;
+    let g = (result.y * 255.0).round() as u32;
+    let b = (result.z * 255.0).round() as u32;
+    (255 << 24) | (r << 16) | (g << 8) | b
+}
+
 
 fn main() {
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
@@ -58,13 +127,14 @@ fn main() {
     let mut light_pos = Vec3 {x:0.0, y:20.0, z:-20.0};
 
     let up = Vec3 {x: 0.0, y: 1.0, z: 0.0};
-    let min_d:f32 = 1e-3;
-    let max_d:f32 = 1e4;
 
     let red_mat = Material { colour: Vec3 {x: 0.8, y: 0.2, z: 0.2}, specular: 0.8 };
     let white_mat = Material { colour: Vec3 {x: 1.0, y: 1.0, z: 1.0}, specular: 0.1 };
     let black_mat = Material { colour: Vec3 {x: 0.1, y: 0.1, z: 0.1}, specular: 1.0 };
     let green_mat = Material { colour: Vec3 {x: 0.2, y: 0.8, z: 0.2}, specular: 0.8 };
+
+    let dark_brown = Material { colour: Vec3 {x: 0.5, y: 0.4, z: 0.2}, specular: 0.2 };
+    let light_brown = Material { colour: Vec3 {x: 0.9, y: 0.7, z: 0.4}, specular: 0.2 };
 
     let scene = Union {
         a: Union {
@@ -82,16 +152,36 @@ fn main() {
                 b: Sphere { radius: 1.0, pos: Vec3 { x: 3.0, y: 12.5, z: 12.7 }, material: black_mat },
             }
         },
-        b: Box { sides: Vec3 { x: 1.0, y: 1.0, z: 1.0}, pos: Vec3 { x: 0.0, y: 0.0, z: 5.0 }, material: green_mat }
+        b: Union {
+            a: Box { sides: Vec3 { x: 1.0, y: 1.0, z: 1.0}, pos: Vec3 { x: 0.0, y: 0.0, z: 5.0 }, material: green_mat },
+            b: Checker {
+                a: Box { sides: Vec3 { x: 100.0, y: 1.0, z: 100.0}, pos: Vec3 { x: 0.0, y: -22.0, z: 0.0 }, material: dark_brown },
+                scale: 0.1,
+                material: light_brown
+            }
+        }
     };
+
+    // let scene = CheckerFloor { height: 10.0, scale: 10.0, radius: 1.0, mat1: green_mat, mat2: red_mat};
     // let scene = Mandelbulb { power: 8, iterations: 12, scale: 1.0, pos: Vec3 {x: 0.0, y: 0.0, z: 0.0}};
-
+    let start =  Instant::now();
     while window.is_open() && !window.is_key_down(Key::Escape) {
-
         frame_count += 1;
         let now = Instant::now();
         let elapsed = now.duration_since(last_instant);
         let dt = elapsed.as_secs_f32().max(1.0);
+
+        let t = now.duration_since(start).as_secs_f32();
+
+        let speed = 1.0;
+        let radius = 200.0;
+
+        let angle = t * speed;
+        light_pos = Vec3 {
+            x: angle.cos() * radius,
+            y: 10.0,
+            z: angle.sin() * radius,
+        };
 
         if elapsed >= Duration::from_secs(1) {
             let fps = frame_count as f32 / dt;
@@ -112,59 +202,25 @@ fn main() {
 
         for y in 0..render_height {
             for x in 0..render_width {
-                // Get point on screen.
-                let screen_x_pos = ((x as f32 - render_width as f32/2.0) / render_width as f32) * screen_width;
-                let screen_y_pos = ((y as f32 - render_height as f32/2.0) / render_height as f32) * screen_width;
-                let pixel_pos = screen_pos + screen_x * screen_x_pos - screen_y * screen_y_pos;
-                let cast_dir = (pixel_pos-cam_pos).normalize();
-
-                let mut total_dist = 0.0;
-                let mut dist = scene.distance_to(cam_pos);
-                let mut pos = cam_pos.clone();
-                while (dist > min_d) && (dist < max_d) {
-                    total_dist += dist;
-                    pos = pos + cast_dir * dist;
-                    dist = scene.distance_to(pos);
-                }
-
-                let result: Vec3;
-
-                if dist < min_d {
-                    let light_vec = (light_pos - pos).normalize();
-
-                    let eps = 1e-2;
-                    let dx = scene.distance_to(pos + Vec3::new(eps, 0.0, 0.0)) - scene.distance_to(pos - Vec3::new(eps, 0.0, 0.0));
-                    let dy = scene.distance_to(pos + Vec3::new(0.0, eps, 0.0)) - scene.distance_to(pos - Vec3::new(0.0, eps, 0.0));
-                    let dz = scene.distance_to(pos + Vec3::new(0.0, 0.0, eps)) - scene.distance_to(pos - Vec3::new(0.0, 0.0, eps));
-
-                    let normal = Vec3 {x: dx, y: dy, z: dz}.normalize();
-
-                    let mat = scene.get_material(pos);
-
-                    let diffuse = normal.dot(light_vec).max(0.0);
-
-                    let reflection = (light_vec).reflect(normal);
-                    let specular = look_dir.dot(reflection).max(0.0).powi(32) * mat.specular;
-
-                    let lightness = (specular + diffuse + 0.1)/2.1;
-
-                    let gamma_lightness = depth_to_gamma(lightness, 0.0, 1.0, 1.2 );
-
-                    result = mat.colour * gamma_lightness
-                }
-                else {
-                    result = Vec3 { x: 0.0, y: 0.0, z: 0.0};
-                }
-
-
-                let r = (result.x * 255.0).round() as u32;
-                let g = (result.y * 255.0).round() as u32;
-                let b = (result.z * 255.0).round() as u32;
+                let px = get_pixel_colour(
+                    x,
+                    y,
+                    render_width,
+                    render_height,
+                    &scene,
+                    cam_pos,
+                    screen_x,
+                    screen_y,
+                    screen_pos,
+                    screen_width,
+                    look_dir,
+                    light_pos
+                );
 
                 for dy in 0..SCREEN_MULTIPLIER {
                     for dx in 0..SCREEN_MULTIPLIER {
                         let idx = (y*SCREEN_MULTIPLIER+dy) * WIDTH + x*SCREEN_MULTIPLIER+dx;
-                        buffer[idx] = (255 << 24) | (r << 16) | (g << 8) | b;
+                        buffer[idx] = px;
                     }
                 }
             }

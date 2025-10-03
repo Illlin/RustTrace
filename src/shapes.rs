@@ -115,6 +115,33 @@ impl<A: Sdf, B: Sdf> Sdf for SmoothUnion<A, B> {
     }
 }
 
+pub struct Checker<A: Sdf> {
+    pub a: A,
+    pub scale: f32,
+    pub material: Material,
+}
+
+impl<A: Sdf> Checker<A> {
+    pub fn new(a: A, scale: f32, material: Material) -> Self {
+        Self { a, scale, material}
+    }
+}
+
+impl<A: Sdf> Sdf for Checker<A> {
+    fn distance_to(&self, p: Vec3) -> f32 {
+        self.a.distance_to(p)
+    }
+    fn get_material(&self, p: Vec3) -> Material {
+        let xi = (p.x * self.scale).floor() as i32;
+        let yi = (p.y * self.scale).floor() as i32;
+        let zi = (p.z * self.scale).floor() as i32;
+        if ((xi + yi + zi) & 1) == 0 {
+            self.a.get_material(p)
+        } else {
+            self.material
+        }
+    }
+}
 
 pub struct Mandelbulb {
     pub power: u32,
