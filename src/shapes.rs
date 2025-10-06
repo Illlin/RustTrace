@@ -144,6 +144,29 @@ impl<A: Sdf> Sdf for Checker<A> {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Repeat<A: Sdf> {
+    pub a: A,
+    pub scale: f32,
+}
+
+impl<A: Sdf> Repeat<A> {
+    pub fn new(a: A, scale: f32) -> Self {
+        Self { a, scale}
+    }
+}
+
+impl<A: Sdf> Sdf for Repeat<A> {
+    fn distance_to(&self, p: Vec3) -> f32 {
+        self.a.distance_to(
+            Vec3 { x: p.x % self.scale, y: p.y % self.scale, z: p.z % self.scale }
+        )
+    }
+    fn get_material(&self, p: Vec3) -> Material {
+        self.a.get_material(p)
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mandelbulb {
     pub power: u32,

@@ -3,7 +3,7 @@ use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use vec3::Vec3;
 use shapes::{Sphere, Sdf, Union, Box, SmoothUnion, Material};
-use crate::shapes::{Checker, Mandelbulb};
+use crate::shapes::{Checker, Mandelbulb, Repeat};
 use rayon::prelude::*;
 
 mod vec3;
@@ -11,7 +11,7 @@ mod shapes;
 
 const WIDTH: usize = 1280;
 const HEIGHT: usize = 1280;
-const SCREEN_MULTIPLIER: usize = 6;
+const SCREEN_MULTIPLIER: usize = 8;
 
 pub struct RayResults {
     pub final_position: Vec3,
@@ -19,10 +19,10 @@ pub struct RayResults {
 }
 
 pub fn depth_to_gamma(
-    depth:     f32,
+    depth: f32,
     min_depth: f32,
     max_depth: f32,
-    gamma:     f32,
+    gamma: f32,
 ) -> f32 {
     let t = (depth - min_depth) / (max_depth - min_depth);
     let t = t.clamp(0.0, 1.0);
@@ -30,10 +30,10 @@ pub fn depth_to_gamma(
 }
 
 pub fn depth_to_u32(
-    depth:     f32,
+    depth: f32,
     min_depth: f32,
     max_depth: f32,
-    gamma:     f32,
+    gamma: f32,
 ) -> u32 {
     let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
     (v).round().clamp(0.0, 255.0) as u32
@@ -46,7 +46,7 @@ fn cast_ray(
     min_depth: f32,
     max_depth: f32,
     start_total_distance: f32,
-) -> RayResults{
+) -> RayResults {
     let mut total_dist = start_total_distance;
     let mut dist = scene.distance_to(start_position);
     let mut pos = start_position.clone();
@@ -69,6 +69,7 @@ fn get_ray_colour(
     min_depth: f32,
     max_depth: f32,
     start_total_distance: f32,
+    bounces: usize,
 ) -> Vec3 {
     let scene_ray = cast_ray(
         scene,
@@ -76,11 +77,11 @@ fn get_ray_colour(
         cast_dir,
         min_depth,
         max_depth,
-        start_total_distance
+        start_total_distance,
     );
-    if scene_ray.distance > max_depth {
+    if scene_ray.distance >= max_depth {
         // Sky box
-        return Vec3 { x: 0.9, y: 0.9, z: 0.9};
+        return Vec3 { x: 0.9, y: 0.9, z: 0.9 };
     }
     let mat = scene.get_material(scene_ray.final_position);
 
@@ -89,29 +90,46 @@ fn get_ray_colour(
     let dy = scene.distance_to(scene_ray.final_position + Vec3::new(0.0, eps, 0.0)) - scene.distance_to(scene_ray.final_position - Vec3::new(0.0, eps, 0.0));
     let dz = scene.distance_to(scene_ray.final_position + Vec3::new(0.0, 0.0, eps)) - scene.distance_to(scene_ray.final_position - Vec3::new(0.0, 0.0, eps));
 
-    let normal = Vec3 {x: dx, y: dy, z: dz}.normalize();
+    let normal = Vec3 { x: dx, y: dy, z: dz }.normalize();
+
+    let safe_pos = scene_ray.final_position + (normal * min_depth * 1.1);
 
     // Phong Lighting
     let light_vec = (light_pos - scene_ray.final_position).normalize();
 
-    let diffuse = normal.dot(light_vec).max(0.0);
-    let reflection = (light_vec).reflect(normal);
-    let specular = cast_dir.dot(reflection).max(0.0).powi(32) * mat.specular;
-    let lightness = (specular + diffuse + 0.1)/2.1;
-    let gamma_lightness = depth_to_gamma(lightness, 0.0, 1.0, 2.2 );
+    // Shadow
+    let light_check = cast_ray(
+        scene,
+        safe_pos,
+        light_vec,
+        min_depth,
+        max_depth,
+        start_total_distance,
+    );
+    let gamma_lightness;
+    if light_check.distance >= max_depth {
+        let diffuse = normal.dot(light_vec).max(0.0);
+        let reflection = (light_vec).reflect(normal);
+        let specular = cast_dir.dot(reflection).max(0.0).powi(32) * mat.specular;
+        let lightness = (specular + diffuse + 0.1) / 2.1;
+        gamma_lightness = depth_to_gamma(lightness, 0.0, 1.0, 2.2);
+    } else {
+        gamma_lightness = 0.1;
+    }
 
     let result = mat.colour * gamma_lightness;
 
-    if (mat.mirror) { // TODO max recursion depth
+    if (mat.mirror && (bounces < 3)) {
         return get_ray_colour(
             scene,
-            scene_ray.final_position + (normal * min_depth*1.1),
-            normal,
+            safe_pos,
+            cast_dir.reflect(normal),
             light_pos,
             min_depth,
             max_depth,
-            scene_ray.distance
-        )*(1.0-mat.mirror_mix) + (result * mat.mirror_mix)
+            scene_ray.distance,
+            bounces + 1,
+        ) * (1.0 - mat.mirror_mix) + (result * mat.mirror_mix);
     }
 
     result
@@ -130,14 +148,15 @@ fn get_pixel_colour(
     screen_width: f32,
     light_pos: Vec3,
 ) -> u32 {
-    let min_d:f32 = 1e-3;
-    let max_d:f32 = 1e3;
+    let min_d: f32 = 1e-3;
+    let min_d: f32 = 0.05;
+    let max_d: f32 = 1e3;
 
     // Get point on screen.
-    let screen_x_pos = ((x as f32 - width as f32/2.0) / width as f32) * screen_width;
-    let screen_y_pos = ((y as f32 - height as f32/2.0) / height as f32) * screen_width;
+    let screen_x_pos = ((x as f32 - width as f32 / 2.0) / width as f32) * screen_width;
+    let screen_y_pos = ((y as f32 - height as f32 / 2.0) / height as f32) * screen_width;
     let pixel_pos = screen_pos + screen_x * screen_x_pos - screen_y * screen_y_pos;
-    let cast_dir = (pixel_pos-cam_pos).normalize();
+    let cast_dir = (pixel_pos - cam_pos).normalize();
 
     let result = get_ray_colour(
         &scene,
@@ -146,7 +165,8 @@ fn get_pixel_colour(
         light_pos,
         min_d,
         max_d,
-        0.0
+        0.0,
+        0,
     );
 
     let r = (result.x * 255.0).round() as u32;
@@ -166,30 +186,30 @@ fn main() {
         WindowOptions::default(),
     ).unwrap();
 
-    let render_height = HEIGHT/SCREEN_MULTIPLIER;
-    let render_width = WIDTH/SCREEN_MULTIPLIER;
+    let render_height = HEIGHT / SCREEN_MULTIPLIER;
+    let render_width = WIDTH / SCREEN_MULTIPLIER;
 
     let mut last_instant = Instant::now();
     let mut frame_count = 0u32;
 
-    let mut cam_pos = Vec3 {x:0.0, y: 0.0, z:-10.0};
-    let mut look_pos = Vec3 {x:0.0, y:0.0, z:0.0};
+    let mut cam_pos = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
+    let mut look_pos = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
     let mut screen_distance = 0.5;
     let mut screen_width = 2.0;
 
-    let mut light_pos = Vec3 {x:0.0, y:20.0, z:-20.0};
+    let mut light_pos = Vec3 { x: 0.0, y: 20.0, z: -20.0 };
 
-    let up = Vec3 {x: 0.0, y: 1.0, z: 0.0};
+    let up = Vec3 { x: 0.0, y: 1.0, z: 0.0 };
 
-    let red_mat = Material { colour: Vec3 {x: 0.8, y: 0.2, z: 0.2}, specular: 0.8, mirror: false, mirror_mix: 0.0 };
-    let white_mat = Material { colour: Vec3 {x: 1.0, y: 1.0, z: 1.0}, specular: 0.1, mirror: true, mirror_mix: 0.0 };
-    let red_mirror_mat = Material { colour: Vec3 {x: 0.8, y: 0.2, z: 0.2}, specular: 1.0, mirror: true, mirror_mix: 0.5 };
-    let blue_mirror_mat = Material { colour: Vec3 {x: 0.2, y: 0.2, z: 0.8}, specular: 1.0, mirror: true, mirror_mix: 0.5 };
-    let black_mat = Material { colour: Vec3 {x: 0.1, y: 0.1, z: 0.1}, specular: 1.0, mirror: false, mirror_mix: 0.0 };
-    let green_mat = Material { colour: Vec3 {x: 0.2, y: 0.8, z: 0.2}, specular: 0.8, mirror: false, mirror_mix: 0.0 };
+    let red_mat = Material { colour: Vec3 { x: 0.8, y: 0.2, z: 0.2 }, specular: 0.8, mirror: false, mirror_mix: 0.0 };
+    let white_mat = Material { colour: Vec3 { x: 1.0, y: 1.0, z: 1.0 }, specular: 0.1, mirror: false, mirror_mix: 0.0 };
+    let red_mirror_mat = Material { colour: Vec3 { x: 0.8, y: 0.2, z: 0.2 }, specular: 1.0, mirror: true, mirror_mix: 0.5 };
+    let blue_mirror_mat = Material { colour: Vec3 { x: 0.2, y: 0.2, z: 0.8 }, specular: 1.0, mirror: true, mirror_mix: 0.5 };
+    let black_mat = Material { colour: Vec3 { x: 0.1, y: 0.1, z: 0.1 }, specular: 1.0, mirror: false, mirror_mix: 0.0 };
+    let green_mat = Material { colour: Vec3 { x: 0.2, y: 0.8, z: 0.2 }, specular: 0.8, mirror: false, mirror_mix: 0.0 };
 
-    let dark_brown = Material { colour: Vec3 {x: 0.5, y: 0.4, z: 0.2}, specular: 0.2, mirror: false, mirror_mix: 0.0 };
-    let light_brown = Material { colour: Vec3 {x: 0.9, y: 0.7, z: 0.4}, specular: 0.2, mirror: false, mirror_mix: 0.0 };
+    let dark_brown = Material { colour: Vec3 { x: 0.5, y: 0.4, z: 0.2 }, specular: 0.2, mirror: true, mirror_mix: 0.96 };
+    let light_brown = Material { colour: Vec3 { x: 0.9, y: 0.7, z: 0.4 }, specular: 0.2, mirror: true, mirror_mix: 0.96 };
 
     // let scene = Union {
     //     a: Union {
@@ -219,25 +239,42 @@ fn main() {
 
     let scene = Union {
         a: Union {
-            a: Sphere { radius: 8.0, pos: Vec3 { x: -5.0, y: 11.0, z: 20.0 }, material: red_mirror_mat },
-            b: Sphere { radius: 8.0, pos: Vec3 { x: 25.0, y: 13.0, z: 20.0 }, material: blue_mirror_mat },
+            a: Sphere { radius: 8.0, pos: Vec3 { x: -5.0, y: -12.0, z: 0.0 }, material: red_mirror_mat },
+            b: Sphere { radius: 8.0, pos: Vec3 { x: 25.0, y: -12.0, z: 10.0 }, material: blue_mirror_mat },
         },
         b: Union {
             a: Union {
-              a: Box { sides: Vec3 { x: 1.0, y: 1.0, z: 1.0}, pos: Vec3 { x: 0.0, y: 0.0, z: 5.0 }, material: green_mat },
-              b: Sphere { radius: 3.0, pos: Vec3 { x: 10.0, y: 5.0, z: 20.0 }, material: red_mat },
+                a: SmoothUnion {
+                    a: Sphere { radius: 8.0, pos: Vec3 { x: 0.0, y: 11.0, z: 20.0 }, material: white_mat },
+                    b: SmoothUnion {
+                        a: Sphere { radius: 12.0, pos: Vec3 { x: 0.0, y: -12.0, z: 20.0 }, material: white_mat },
+                        b: Sphere { radius: 10.0, pos: Vec3 { x: 0.0, y: 0.0, z: 20.0 }, material: white_mat },
+                        smooth: 0.3,
+                    },
+                    smooth: 0.3,
+                },
+                b: Union {
+                    a: Sphere { radius: 1.0, pos: Vec3 { x: -3.0, y: 12.5, z: 12.7 }, material: black_mat },
+                    b: Sphere { radius: 1.0, pos: Vec3 { x: 3.0, y: 12.5, z: 12.7 }, material: black_mat },
+                },
             },
-            b: Checker {
-                a: Box { sides: Vec3 { x: 100.0, y: 1.0, z: 100.0}, pos: Vec3 { x: 0.0, y: -22.0, z: 0.0 }, material: dark_brown },
-                scale: 0.1,
-                material: light_brown
-            }
-        }
+            b: Union {
+                a: Union {
+                    a: Box { sides: Vec3 { x: 1.0, y: 1.0, z: 1.0 }, pos: Vec3 { x: 0.0, y: 0.0, z: 5.0 }, material: green_mat },
+                    b: Sphere { radius: 3.0, pos: Vec3 { x: 10.0, y: 5.0, z: 20.0 }, material: red_mat },
+                },
+                b: Checker {
+                    a: Box { sides: Vec3 { x: 100.0, y: 1.0, z: 100.0 }, pos: Vec3 { x: 0.0, y: -20.0, z: 0.0 }, material: dark_brown },
+                    scale: 0.1,
+                    material: light_brown,
+                },
+            },
+        },
     };
 
     // let scene = CheckerFloor { height: 10.0, scale: 10.0, radius: 1.0, mat1: green_mat, mat2: red_mat};
     // let scene = Mandelbulb { power: 8, iterations: 12, scale: 1.0, pos: Vec3 {x: 0.0, y: 0.0, z: 0.0}};
-    let start =  Instant::now();
+    let start = Instant::now();
     while window.is_open() && !window.is_key_down(Key::Escape) {
         frame_count += 1;
         let now = Instant::now();
@@ -252,7 +289,7 @@ fn main() {
         let angle = t * speed;
         light_pos = Vec3 {
             x: angle.cos() * radius,
-            y: 10.0,
+            y: 500.0,
             z: angle.sin() * radius,
         };
 
@@ -269,7 +306,7 @@ fn main() {
             .unwrap();
 
         let look_dir = (look_pos - cam_pos).normalize();
-        let screen_pos = cam_pos+look_dir*screen_distance;
+        let screen_pos = cam_pos + look_dir * screen_distance;
         let screen_y = up - look_dir * look_dir.dot(up);
         let screen_x = look_dir.cross(up);
 
@@ -286,12 +323,12 @@ fn main() {
                     screen_y,
                     screen_pos,
                     screen_width,
-                    light_pos
+                    light_pos,
                 );
 
                 for dy in 0..SCREEN_MULTIPLIER {
                     for dx in 0..SCREEN_MULTIPLIER {
-                        let idx = (y*SCREEN_MULTIPLIER+dy) * WIDTH + x*SCREEN_MULTIPLIER+dx;
+                        let idx = (y * SCREEN_MULTIPLIER + dy) * WIDTH + x * SCREEN_MULTIPLIER + dx;
                         buffer[idx] = px;
                     }
                 }
@@ -350,8 +387,8 @@ fn main() {
             let mut phi = look_vector.z.atan2(look_vector.x);
             let mut theta = (look_vector.y / look_r).acos();
 
-            if right_key { phi   += look_speed * dt; }
-            if left_key { phi   -= look_speed * dt; }
+            if right_key { phi += look_speed * dt; }
+            if left_key { phi -= look_speed * dt; }
             if up_key { theta -= look_speed * dt; }
             if down_key { theta += look_speed * dt; }
 
