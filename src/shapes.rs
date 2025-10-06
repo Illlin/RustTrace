@@ -4,6 +4,8 @@ use crate::vec3::Vec3;
 pub struct Material {
     pub colour: Vec3,
     pub specular: f32,
+    pub mirror: bool,
+    pub mirror_mix: f32,
 }
 
 

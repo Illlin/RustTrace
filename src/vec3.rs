@@ -105,3 +105,15 @@ impl ops::Mul<f32> for Vec3 {
     }
 }
 
+impl ops::Mul<Vec3> for Vec3 {
+    type Output = Vec3;
+    fn mul(self, d: Vec3) -> Vec3 {
+        Vec3 {
+            x: self.x * d.x,
+            y: self.y * d.y,
+            z: self.z * d.z
+        }
+    }
+}
+
+
