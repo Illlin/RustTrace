@@ -11,11 +11,17 @@ mod shapes;
 
 const WIDTH: usize = 1280;
 const HEIGHT: usize = 1280;
-const SCREEN_MULTIPLIER: usize = 8;
 
 pub struct RayResults {
     pub final_position: Vec3,
     pub distance: f32,
+}
+
+pub struct RayInfo {
+    pub start_position: Vec3,
+    pub cast_direction: Vec3,
+    pub min_depth: f32,
+    pub max_depth: f32,
 }
 
 pub fn depth_to_gamma(
@@ -41,18 +47,15 @@ pub fn depth_to_u32(
 
 fn cast_ray(
     scene: &impl Sdf,
-    start_position: Vec3,
-    cast_dir: Vec3,
-    min_depth: f32,
-    max_depth: f32,
+    ray: &RayInfo,
     start_total_distance: f32,
 ) -> RayResults {
     let mut total_dist = start_total_distance;
-    let mut dist = scene.distance_to(start_position);
-    let mut pos = start_position.clone();
-    while (dist > min_depth) && (total_dist < max_depth) {
+    let mut dist = scene.distance_to(ray.start_position);
+    let mut pos = ray.start_position.clone();
+    while (dist > ray.min_depth) && (total_dist < ray.max_depth) {
         total_dist += dist;
-        pos = pos + cast_dir * dist;
+        pos = pos + ray.cast_direction * dist;
         dist = scene.distance_to(pos);
     }
     RayResults {
@@ -63,23 +66,17 @@ fn cast_ray(
 
 fn get_ray_colour(
     scene: &impl Sdf,
-    start_position: Vec3,
-    cast_dir: Vec3,
+    ray: &RayInfo,
     light_pos: Vec3,
-    min_depth: f32,
-    max_depth: f32,
     start_total_distance: f32,
     bounces: usize,
 ) -> Vec3 {
     let scene_ray = cast_ray(
         scene,
-        start_position,
-        cast_dir,
-        min_depth,
-        max_depth,
+        ray,
         start_total_distance,
     );
-    if scene_ray.distance >= max_depth {
+    if scene_ray.distance >= ray.max_depth {
         // Sky box
         return Vec3 { x: 0.9, y: 0.9, z: 0.9 };
     }
@@ -92,25 +89,30 @@ fn get_ray_colour(
 
     let normal = Vec3 { x: dx, y: dy, z: dz }.normalize();
 
-    let safe_pos = scene_ray.final_position + (normal * min_depth * 1.1);
+    let safe_pos = scene_ray.final_position + (normal * ray.min_depth * 1.1);
 
     // Phong Lighting
     let light_vec = (light_pos - scene_ray.final_position).normalize();
 
     // Shadow
+    let light_ray = RayInfo {
+        start_position: safe_pos,
+        cast_direction: light_vec,
+        min_depth: ray.min_depth,
+        max_depth: ray.max_depth
+    };
+
     let light_check = cast_ray(
         scene,
-        safe_pos,
-        light_vec,
-        min_depth,
-        max_depth,
+        &light_ray,
         start_total_distance,
     );
+
     let gamma_lightness;
-    if light_check.distance >= max_depth {
+    if light_check.distance >= light_ray.max_depth {
         let diffuse = normal.dot(light_vec).max(0.0);
         let reflection = (light_vec).reflect(normal);
-        let specular = cast_dir.dot(reflection).max(0.0).powi(32) * mat.specular;
+        let specular = light_ray.cast_direction.dot(reflection).max(0.0).powi(32) * mat.specular;
         let lightness = (specular + diffuse + 0.1) / 2.1;
         gamma_lightness = depth_to_gamma(lightness, 0.0, 1.0, 2.2);
     } else {
@@ -120,13 +122,16 @@ fn get_ray_colour(
     let result = mat.colour * gamma_lightness;
 
     if (mat.mirror && (bounces < 3)) {
+        let reflection_ray = RayInfo {
+            start_position: safe_pos,
+            cast_direction: ray.cast_direction.reflect(normal),
+            min_depth: ray.min_depth,
+            max_depth: ray.max_depth
+        };
         return get_ray_colour(
             scene,
-            safe_pos,
-            cast_dir.reflect(normal),
+            &reflection_ray,
             light_pos,
-            min_depth,
-            max_depth,
             scene_ray.distance,
             bounces + 1,
         ) * (1.0 - mat.mirror_mix) + (result * mat.mirror_mix);
@@ -140,7 +145,7 @@ fn get_pixel_colour(
     y: usize,
     width: usize,
     height: usize,
-    scene: impl Sdf,
+    scene: &impl Sdf,
     cam_pos: Vec3,
     screen_x: Vec3,
     screen_y: Vec3,
@@ -158,13 +163,17 @@ fn get_pixel_colour(
     let pixel_pos = screen_pos + screen_x * screen_x_pos - screen_y * screen_y_pos;
     let cast_dir = (pixel_pos - cam_pos).normalize();
 
+    let ray = RayInfo {
+        start_position: cam_pos,
+        cast_direction: cast_dir,
+        min_depth: min_d,
+        max_depth: max_d
+    };
+
     let result = get_ray_colour(
-        &scene,
-        cam_pos,
-        cast_dir,
+        scene,
+        &ray,
         light_pos,
-        min_d,
-        max_d,
         0.0,
         0,
     );
@@ -185,6 +194,8 @@ fn main() {
         HEIGHT,
         WindowOptions::default(),
     ).unwrap();
+
+    const SCREEN_MULTIPLIER: usize = 4;
 
     let render_height = HEIGHT / SCREEN_MULTIPLIER;
     let render_width = WIDTH / SCREEN_MULTIPLIER;
@@ -293,7 +304,7 @@ fn main() {
             z: angle.sin() * radius,
         };
 
-        if elapsed >= Duration::from_secs(1) {
+        if elapsed >= Duration::from_secs(10) {
             let fps = frame_count as f32 / dt;
             window.set_title(&format!("My Rust Framebuffer — {:.2} FPS", fps));
 
@@ -317,7 +328,7 @@ fn main() {
                     y,
                     render_width,
                     render_height,
-                    scene,
+                    &scene,
                     cam_pos,
                     screen_x,
                     screen_y,

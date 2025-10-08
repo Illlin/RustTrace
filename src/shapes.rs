@@ -13,7 +13,7 @@ pub trait Sdf {
     fn distance_to(&self, p: Vec3) -> f32;
     fn get_material(&self, p: Vec3) -> Material;
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+
 pub struct Sphere {
     pub radius: f32,
     pub pos: Vec3,
@@ -35,7 +35,7 @@ impl Sdf for Sphere {
         self.material
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+
 pub struct Box {
     pub sides: Vec3,
     pub pos: Vec3,
@@ -58,7 +58,7 @@ impl Sdf for Box {
         self.material
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+
 pub struct Union<A: Sdf, B: Sdf> {
     pub(crate) a: A,
     pub(crate) b: B,
@@ -85,7 +85,7 @@ impl<A: Sdf, B: Sdf> Sdf for Union<A, B> {
         self.b.get_material(p)
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+
 pub struct SmoothUnion<A: Sdf, B: Sdf> {
     pub(crate) a: A,
     pub(crate) b: B,
@@ -116,7 +116,7 @@ impl<A: Sdf, B: Sdf> Sdf for SmoothUnion<A, B> {
         self.b.get_material(p)
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+
 pub struct Checker<A: Sdf> {
     pub a: A,
     pub scale: f32,
@@ -145,7 +145,6 @@ impl<A: Sdf> Sdf for Checker<A> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Repeat<A: Sdf> {
     pub a: A,
     pub scale: f32,
