@@ -3,8 +3,7 @@ use minifb::{Key, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use vec3::Vec3;
 use shapes::{Sphere, Sdf, Union, Box, SmoothUnion, Material};
-use crate::shapes::{Checker, Mandelbulb, Repeat};
-use rayon::prelude::*;
+use crate::shapes::{Checker, SpeedField};
 
 mod vec3;
 mod shapes;
@@ -42,9 +41,9 @@ pub fn depth_to_u32(
     gamma: f32,
 ) -> u32 {
     let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
-    (v).round().clamp(0.0, 255.0) as u32
+    v.round().clamp(0.0, 255.0) as u32
 }
-
+#[inline]
 fn cast_ray(
     scene: &impl Sdf,
     ray: &RayInfo,
@@ -52,7 +51,7 @@ fn cast_ray(
 ) -> RayResults {
     let mut total_dist = start_total_distance;
     let mut dist = scene.distance_to(ray.start_position);
-    let mut pos = ray.start_position.clone();
+    let mut pos = ray.start_position;
     while (dist > ray.min_depth) && (total_dist < ray.max_depth) {
         total_dist += dist;
         pos = pos + ray.cast_direction * dist;
@@ -108,20 +107,19 @@ fn get_ray_colour(
         start_total_distance,
     );
 
-    let gamma_lightness;
-    if light_check.distance >= light_ray.max_depth {
+    let gamma_lightness = if light_check.distance >= light_ray.max_depth {
         let diffuse = normal.dot(light_vec).max(0.0);
-        let reflection = (light_vec).reflect(normal);
+        let reflection = light_vec.reflect(normal);
         let specular = light_ray.cast_direction.dot(reflection).max(0.0).powi(32) * mat.specular;
         let lightness = (specular + diffuse + 0.1) / 2.1;
-        gamma_lightness = depth_to_gamma(lightness, 0.0, 1.0, 2.2);
+        depth_to_gamma(lightness, 0.0, 1.0, 2.2)
     } else {
-        gamma_lightness = 0.1;
-    }
+        0.1
+    };
 
     let result = mat.colour * gamma_lightness;
 
-    if (mat.mirror && (bounces < 3)) {
+    if mat.mirror && (bounces < 3) {
         let reflection_ray = RayInfo {
             start_position: safe_pos,
             cast_direction: ray.cast_direction.reflect(normal),
@@ -153,7 +151,6 @@ fn get_pixel_colour(
     screen_width: f32,
     light_pos: Vec3,
 ) -> u32 {
-    let min_d: f32 = 1e-3;
     let min_d: f32 = 0.05;
     let max_d: f32 = 1e3;
 
@@ -208,80 +205,57 @@ fn main() {
     let mut screen_distance = 0.5;
     let mut screen_width = 2.0;
 
-    let mut light_pos = Vec3 { x: 0.0, y: 20.0, z: -20.0 };
+    let mut light_pos;
 
     let up = Vec3 { x: 0.0, y: 1.0, z: 0.0 };
 
-    let red_mat = Material { colour: Vec3 { x: 0.8, y: 0.2, z: 0.2 }, specular: 0.8, mirror: false, mirror_mix: 0.0 };
-    let white_mat = Material { colour: Vec3 { x: 1.0, y: 1.0, z: 1.0 }, specular: 0.1, mirror: false, mirror_mix: 0.0 };
-    let red_mirror_mat = Material { colour: Vec3 { x: 0.8, y: 0.2, z: 0.2 }, specular: 1.0, mirror: true, mirror_mix: 0.5 };
-    let blue_mirror_mat = Material { colour: Vec3 { x: 0.2, y: 0.2, z: 0.8 }, specular: 1.0, mirror: true, mirror_mix: 0.5 };
-    let black_mat = Material { colour: Vec3 { x: 0.1, y: 0.1, z: 0.1 }, specular: 1.0, mirror: false, mirror_mix: 0.0 };
-    let green_mat = Material { colour: Vec3 { x: 0.2, y: 0.8, z: 0.2 }, specular: 0.8, mirror: false, mirror_mix: 0.0 };
+    let red_mat = Material::new(Vec3::new(0.8, 0.2, 0.2 ), 0.8,  false, 0.0);
+    let white_mat = Material::new(Vec3::new(1.0, 1.0, 1.0 ), 0.1,  false, 0.0);
+    let red_mirror_mat = Material::new(Vec3::new(0.8, 0.2, 0.2 ), 1.0,  true, 0.5);
+    let blue_mirror_mat = Material::new(Vec3::new(0.2, 0.2, 0.8 ), 1.0,  true, 0.5);
+    let black_mat = Material::new(Vec3::new(0.1, 0.1, 0.1 ), 1.0,  false, 0.0);
+    let green_mat = Material::new(Vec3::new(0.2, 0.8, 0.2 ), 0.8,  false, 0.0);
 
-    let dark_brown = Material { colour: Vec3 { x: 0.5, y: 0.4, z: 0.2 }, specular: 0.2, mirror: true, mirror_mix: 0.96 };
-    let light_brown = Material { colour: Vec3 { x: 0.9, y: 0.7, z: 0.4 }, specular: 0.2, mirror: true, mirror_mix: 0.96 };
+    let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2 ), 0.2,  true, 0.96);
+    let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4 ), 0.2,  true, 0.96);
 
-    // let scene = Union {
-    //     a: Union {
-    //         a: SmoothUnion {
-    //             a: Sphere { radius: 8.0, pos: Vec3 { x: 0.0, y: 11.0, z: 20.0 }, material: white_mat },
-    //             b: SmoothUnion {
-    //                 a: Sphere { radius: 12.0, pos: Vec3 { x: 0.0, y: -12.0, z: 20.0 }, material: white_mat },
-    //                 b: Sphere { radius: 10.0, pos: Vec3 { x: 0.0, y: 0.0, z: 20.0 }, material: white_mat },
-    //                 smooth: 0.3
-    //             },
-    //             smooth: 0.3
-    //         },
-    //         b: Union {
-    //             a: Sphere { radius: 1.0, pos: Vec3 { x: -3.0, y: 12.5, z: 12.7 }, material: black_mat },
-    //             b: Sphere { radius: 1.0, pos: Vec3 { x: 3.0, y: 12.5, z: 12.7 }, material: black_mat },
-    //         }
-    //     },
-    //     b: Union {
-    //         a: Box { sides: Vec3 { x: 1.0, y: 1.0, z: 1.0}, pos: Vec3 { x: 0.0, y: 0.0, z: 5.0 }, material: green_mat },
-    //         b: Checker {
-    //             a: Box { sides: Vec3 { x: 100.0, y: 1.0, z: 100.0}, pos: Vec3 { x: 0.0, y: -22.0, z: 0.0 }, material: dark_brown },
-    //             scale: 0.1,
-    //             material: light_brown
-    //         }
-    //     }
-    // };
+    let scene = SpeedField::new(
+        Union::new(
+            Union::new(
+                Sphere::new(8.0, Vec3::new(-5.0, -12.0, 0.0 ), red_mirror_mat),
+                Sphere::new(8.0, Vec3::new(25.0, -12.0, 10.0 ), blue_mirror_mat ),
+            ),
+            Union::new(
+                Union::new(
+                    SmoothUnion::new(
+                        Sphere::new( 8.0, Vec3::new(0.0, 11.0, 20.0 ), white_mat ),
+                        SmoothUnion::new(
+                            Sphere::new( 12.0, Vec3::new(0.0, -12.0, 20.0 ), white_mat ),
+                            Sphere::new( 10.0, Vec3::new(0.0, 0.0, 20.0 ), white_mat ),
+                            0.3,
+                        ),
+                        0.3,
+                    ),
+                    Union::new(
+                        Sphere::new( 1.0, Vec3::new(-3.0, 12.5, 12.7 ), black_mat ),
+                        Sphere::new( 1.0, Vec3::new(3.0, 12.5, 12.7 ), black_mat ),
+                    ),
+                ),
+                Union::new(
+                    Union::new(
+                        Box::new(Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 0.0, 5.0), green_mat),
+                        Sphere::new( 3.0, Vec3::new(10.0, 5.0, 20.0 ), red_mat ),
+                    ),
+                    Checker::new(
+                        Box::new(Vec3::new(50.0, 1.0, 50.0), Vec3::new(0.0, -20.0, 0.0), dark_brown),
+                        0.1,
+                        light_brown,
+                    ),
+                ),
+            ),
+        )
+    );
 
-    let scene = Union {
-        a: Union {
-            a: Sphere { radius: 8.0, pos: Vec3 { x: -5.0, y: -12.0, z: 0.0 }, material: red_mirror_mat },
-            b: Sphere { radius: 8.0, pos: Vec3 { x: 25.0, y: -12.0, z: 10.0 }, material: blue_mirror_mat },
-        },
-        b: Union {
-            a: Union {
-                a: SmoothUnion {
-                    a: Sphere { radius: 8.0, pos: Vec3 { x: 0.0, y: 11.0, z: 20.0 }, material: white_mat },
-                    b: SmoothUnion {
-                        a: Sphere { radius: 12.0, pos: Vec3 { x: 0.0, y: -12.0, z: 20.0 }, material: white_mat },
-                        b: Sphere { radius: 10.0, pos: Vec3 { x: 0.0, y: 0.0, z: 20.0 }, material: white_mat },
-                        smooth: 0.3,
-                    },
-                    smooth: 0.3,
-                },
-                b: Union {
-                    a: Sphere { radius: 1.0, pos: Vec3 { x: -3.0, y: 12.5, z: 12.7 }, material: black_mat },
-                    b: Sphere { radius: 1.0, pos: Vec3 { x: 3.0, y: 12.5, z: 12.7 }, material: black_mat },
-                },
-            },
-            b: Union {
-                a: Union {
-                    a: Box { sides: Vec3 { x: 1.0, y: 1.0, z: 1.0 }, pos: Vec3 { x: 0.0, y: 0.0, z: 5.0 }, material: green_mat },
-                    b: Sphere { radius: 3.0, pos: Vec3 { x: 10.0, y: 5.0, z: 20.0 }, material: red_mat },
-                },
-                b: Checker {
-                    a: Box { sides: Vec3 { x: 100.0, y: 1.0, z: 100.0 }, pos: Vec3 { x: 0.0, y: -20.0, z: 0.0 }, material: dark_brown },
-                    scale: 0.1,
-                    material: light_brown,
-                },
-            },
-        },
-    };
 
     // let scene = CheckerFloor { height: 10.0, scale: 10.0, radius: 1.0, mat1: green_mat, mat2: red_mat};
     // let scene = Mandelbulb { power: 8, iterations: 12, scale: 1.0, pos: Vec3 {x: 0.0, y: 0.0, z: 0.0}};
@@ -304,7 +278,7 @@ fn main() {
             z: angle.sin() * radius,
         };
 
-        if elapsed >= Duration::from_secs(10) {
+        if elapsed >= Duration::from_secs(1) {
             let fps = frame_count as f32 / dt;
             window.set_title(&format!("My Rust Framebuffer — {:.2} FPS", fps));
 
@@ -373,17 +347,17 @@ fn main() {
         }
 
         if window.is_key_down(Key::NumPadPlus) {
-            screen_distance = screen_distance - 0.1 * dt;
+            screen_distance -= 0.1 * dt;
         }
         if window.is_key_down(Key::NumPadMinus) {
-            screen_distance = screen_distance + 0.1 * dt;
+            screen_distance += 0.1 * dt;
         }
 
         if window.is_key_down(Key::NumPadAsterisk) {
-            screen_width = screen_width - 0.1 * dt;
+            screen_width -= 0.1 * dt;
         }
         if window.is_key_down(Key::NumPadSlash) {
-            screen_width = screen_width + 0.1 * dt;
+            screen_width += 0.1 * dt;
         }
 
         let look_speed = 0.1;

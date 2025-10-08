@@ -8,6 +8,12 @@ pub struct Material {
     pub mirror_mix: f32,
 }
 
+impl Material {
+    pub fn new(colour: Vec3, specular: f32, mirror: bool, mirror_mix: f32) -> Self {
+        Self { colour, specular, mirror, mirror_mix }
+    }
+}
+
 
 pub trait Sdf {
     fn distance_to(&self, p: Vec3) -> f32;
@@ -31,7 +37,7 @@ impl Sdf for Sphere {
         let a = p - self.pos;
         a.magnitude() - self.radius
     }
-    fn get_material(&self, p: Vec3) -> Material {
+    fn get_material(&self, _p: Vec3) -> Material {
         self.material
     }
 }
@@ -54,7 +60,7 @@ impl Sdf for Box {
         let q = p.abs() - self.sides;
         q.max(0.0).magnitude() + q.x.max(q.y.max(q.z)).min(0.0)
     }
-    fn get_material(&self, p: Vec3) -> Material {
+    fn get_material(&self, _p: Vec3) -> Material {
         self.material
     }
 }
@@ -166,7 +172,86 @@ impl<A: Sdf> Sdf for Repeat<A> {
         self.a.get_material(p)
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+
+pub struct SpeedField<A: Sdf> {
+    pub a: A,
+    pub cache: Vec<f32>,
+    pub size: usize,
+    pub scale: f32,
+    pub centre: Vec3,
+}
+
+impl<A: Sdf> SpeedField<A> {
+    pub fn new(a: A) -> Self {
+        let size = 100;
+        let scale = 1.0;
+
+        let rad = scale * 2.0f32.sqrt();
+
+        let mut cache = vec![0.0f32; size * size * size];
+
+        // Compute known safe distance field
+        let centre= Vec3 {
+            x: (size/2) as f32 * scale,
+            y: (size/2) as f32 * scale,
+            z: (size/2) as f32 * scale
+        };
+        for z in 0..size {
+            let z_pos = scale * z as f32;
+            println!("{z}");
+            for y in 0..size {
+                let y_pos = scale * y as f32;
+                for x in 0..size {
+                    let point = Vec3 {
+                        x: scale * x as f32,
+                        y: y_pos,
+                        z: z_pos,
+                    } - centre;
+                    let dist = a.distance_to(point);
+                    if dist > rad {
+                        cache[x + y * size + z * size * size] = dist - rad*1.001;
+                    }
+                }
+            }
+        }
+        let arr_size = size*size*size;
+        println!("{arr_size}");
+
+        Self { a, cache, size, scale, centre }
+    }
+}
+
+impl<A: Sdf> Sdf for SpeedField<A> {
+    fn distance_to(&self, p: Vec3) -> f32 {
+        let local = p + self.centre;
+
+        let xi = (local.x / self.scale).floor() as isize;
+        let yi = (local.y / self.scale).floor() as isize;
+        let zi = (local.z / self.scale).floor() as isize;
+
+        if xi < 0 || yi < 0 || zi < 0
+            || xi >= self.size as isize
+            || yi >= self.size as isize
+            || zi >= self.size as isize
+        {
+            return 10000000.0;
+        }
+
+        let s = self.size as isize;
+        let idx = xi + yi * s + zi * (s * s);
+
+        let dist = self.cache[idx as usize];
+        if dist > 0.1 {
+            dist
+        } else {
+            self.a.distance_to(p)
+        }
+    }
+    fn get_material(&self, p: Vec3) -> Material {
+        self.a.get_material(p)
+    }
+}
+
 pub struct Mandelbulb {
     pub power: u32,
     pub iterations: u32,
@@ -188,7 +273,7 @@ impl Mandelbulb {
 }
 
 impl Sdf for Mandelbulb {
-    fn get_material(&self, p: Vec3) -> Material {
+    fn get_material(&self, _p: Vec3) -> Material {
         self.material
     }
     fn distance_to(&self, p: Vec3) -> f32 {
