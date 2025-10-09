@@ -209,7 +209,7 @@ impl<A: Sdf> SpeedField<A> {
                     } - centre;
                     let dist = a.distance_to(point);
                     if dist > rad {
-                        cache[x + y * size + z * size * size] = dist - rad*1.001;
+                        cache[x + y * size + z * size * size] = dist - rad;
                     }
                 }
             }
@@ -224,24 +224,25 @@ impl<A: Sdf> SpeedField<A> {
 impl<A: Sdf> Sdf for SpeedField<A> {
     fn distance_to(&self, p: Vec3) -> f32 {
         let local = p + self.centre;
+        let size = self.size as isize;
 
         let xi = (local.x / self.scale).floor() as isize;
         let yi = (local.y / self.scale).floor() as isize;
         let zi = (local.z / self.scale).floor() as isize;
 
         if xi < 0 || yi < 0 || zi < 0
-            || xi >= self.size as isize
-            || yi >= self.size as isize
-            || zi >= self.size as isize
+            || xi >= size
+            || yi >= size
+            || zi >= size
         {
             return 10000000.0;
         }
 
-        let s = self.size as isize;
+        let s = size;
         let idx = xi + yi * s + zi * (s * s);
 
         let dist = self.cache[idx as usize];
-        if dist > 0.1 {
+        if dist > 0.5 {
             dist
         } else {
             self.a.distance_to(p)

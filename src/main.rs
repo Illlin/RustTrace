@@ -1,9 +1,9 @@
 use std::f32::consts::PI;
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use vec3::Vec3;
 use shapes::{Sphere, Sdf, Union, Box, SmoothUnion, Material};
-use crate::shapes::{Checker, SpeedField};
+use crate::shapes::{Checker, Mandelbulb, SpeedField};
 
 mod vec3;
 mod shapes;
@@ -77,7 +77,7 @@ fn get_ray_colour(
     );
     if scene_ray.distance >= ray.max_depth {
         // Sky box
-        return Vec3 { x: 0.9, y: 0.9, z: 0.9 };
+        return Vec3 { x: 0.59, y: 0.80, z: 0.91 };
     }
     let mat = scene.get_material(scene_ray.final_position);
 
@@ -88,7 +88,7 @@ fn get_ray_colour(
 
     let normal = Vec3 { x: dx, y: dy, z: dz }.normalize();
 
-    let safe_pos = scene_ray.final_position + (normal * ray.min_depth * 1.1);
+    let safe_pos = scene_ray.final_position + (-ray.cast_direction * ray.min_depth * 1.3);
 
     // Phong Lighting
     let light_vec = (light_pos - scene_ray.final_position).normalize();
@@ -110,7 +110,7 @@ fn get_ray_colour(
     let gamma_lightness = if light_check.distance >= light_ray.max_depth {
         let diffuse = normal.dot(light_vec).max(0.0);
         let reflection = light_vec.reflect(normal);
-        let specular = light_ray.cast_direction.dot(reflection).max(0.0).powi(32) * mat.specular;
+        let specular = (-light_ray.cast_direction).dot(reflection).max(0.0).powi(32) * mat.specular;
         let lightness = (specular + diffuse + 0.1) / 2.1;
         depth_to_gamma(lightness, 0.0, 1.0, 2.2)
     } else {
@@ -151,7 +151,7 @@ fn get_pixel_colour(
     screen_width: f32,
     light_pos: Vec3,
 ) -> u32 {
-    let min_d: f32 = 0.05;
+    let min_d: f32 = 0.001;
     let max_d: f32 = 1e3;
 
     // Get point on screen.
@@ -192,10 +192,7 @@ fn main() {
         WindowOptions::default(),
     ).unwrap();
 
-    const SCREEN_MULTIPLIER: usize = 4;
-
-    let render_height = HEIGHT / SCREEN_MULTIPLIER;
-    let render_width = WIDTH / SCREEN_MULTIPLIER;
+    let mut SCREEN_MULTIPLIER: usize = 4;
 
     let mut last_instant = Instant::now();
     let mut frame_count = 0u32;
@@ -216,8 +213,8 @@ fn main() {
     let black_mat = Material::new(Vec3::new(0.1, 0.1, 0.1 ), 1.0,  false, 0.0);
     let green_mat = Material::new(Vec3::new(0.2, 0.8, 0.2 ), 0.8,  false, 0.0);
 
-    let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2 ), 0.2,  true, 0.96);
-    let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4 ), 0.2,  true, 0.96);
+    let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2 ), 0.2,  false, 0.96);
+    let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4 ), 0.2,  false, 0.96);
 
     let scene = SpeedField::new(
         Union::new(
@@ -261,6 +258,9 @@ fn main() {
     // let scene = Mandelbulb { power: 8, iterations: 12, scale: 1.0, pos: Vec3 {x: 0.0, y: 0.0, z: 0.0}};
     let start = Instant::now();
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        let render_height = HEIGHT / SCREEN_MULTIPLIER;
+        let render_width = WIDTH / SCREEN_MULTIPLIER;
+
         frame_count += 1;
         let now = Instant::now();
         let elapsed = now.duration_since(last_instant);
@@ -271,7 +271,8 @@ fn main() {
         let speed = 1.0;
         let radius = 200.0;
 
-        let angle = t * speed;
+        // let angle = t * speed;
+        let angle = 4.1 as f32;
         light_pos = Vec3 {
             x: angle.cos() * radius,
             y: 500.0,
@@ -358,6 +359,19 @@ fn main() {
         }
         if window.is_key_down(Key::NumPadSlash) {
             screen_width += 0.1 * dt;
+        }
+
+        if window.is_key_down(Key::Key1) {
+            SCREEN_MULTIPLIER = 1;
+        }
+        if window.is_key_down(Key::Key2) {
+            SCREEN_MULTIPLIER = 2;
+        }
+        if window.is_key_down(Key::Key3) {
+            SCREEN_MULTIPLIER = 4;
+        }
+        if window.is_key_down(Key::Key4) {
+            SCREEN_MULTIPLIER = 8;
         }
 
         let look_speed = 0.1;
