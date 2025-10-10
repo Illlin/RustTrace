@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use std::time::{Duration, Instant};
 use vec3::Vec3;
@@ -13,32 +13,32 @@ const HEIGHT: usize = 1280;
 
 pub struct RayResults {
     pub final_position: Vec3,
-    pub distance: f32,
+    pub distance: f64,
 }
 
 pub struct RayInfo {
     pub start_position: Vec3,
     pub cast_direction: Vec3,
-    pub min_depth: f32,
-    pub max_depth: f32,
+    pub min_depth: f64,
+    pub max_depth: f64,
 }
 
 pub fn depth_to_gamma(
-    depth: f32,
-    min_depth: f32,
-    max_depth: f32,
-    gamma: f32,
-) -> f32 {
+    depth: f64,
+    min_depth: f64,
+    max_depth: f64,
+    gamma: f64,
+) -> f64 {
     let t = (depth - min_depth) / (max_depth - min_depth);
     let t = t.clamp(0.0, 1.0);
     t.powf(1.0 / gamma)
 }
 
 pub fn depth_to_u32(
-    depth: f32,
-    min_depth: f32,
-    max_depth: f32,
-    gamma: f32,
+    depth: f64,
+    min_depth: f64,
+    max_depth: f64,
+    gamma: f64,
 ) -> u32 {
     let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
     v.round().clamp(0.0, 255.0) as u32
@@ -47,7 +47,7 @@ pub fn depth_to_u32(
 fn cast_ray(
     scene: &impl Sdf,
     ray: &RayInfo,
-    start_total_distance: f32,
+    start_total_distance: f64,
 ) -> RayResults {
     let mut total_dist = start_total_distance;
     let mut dist = scene.distance_to(ray.start_position);
@@ -67,7 +67,7 @@ fn get_ray_colour(
     scene: &impl Sdf,
     ray: &RayInfo,
     light_pos: Vec3,
-    start_total_distance: f32,
+    start_total_distance: f64,
     bounces: usize,
 ) -> Vec3 {
     let scene_ray = cast_ray(
@@ -148,15 +148,15 @@ fn get_pixel_colour(
     screen_x: Vec3,
     screen_y: Vec3,
     screen_pos: Vec3,
-    screen_width: f32,
+    screen_width: f64,
     light_pos: Vec3,
 ) -> u32 {
-    let min_d: f32 = 0.001;
-    let max_d: f32 = 1e3;
+    let min_d: f64 = 0.001;
+    let max_d: f64 = 1e3;
 
     // Get point on screen.
-    let screen_x_pos = ((x as f32 - width as f32 / 2.0) / width as f32) * screen_width;
-    let screen_y_pos = ((y as f32 - height as f32 / 2.0) / height as f32) * screen_width;
+    let screen_x_pos = ((x as f64 - width as f64 / 2.0) / width as f64) * screen_width;
+    let screen_y_pos = ((y as f64 - height as f64 / 2.0) / height as f64) * screen_width;
     let pixel_pos = screen_pos + screen_x * screen_x_pos - screen_y * screen_y_pos;
     let cast_dir = (pixel_pos - cam_pos).normalize();
 
@@ -264,15 +264,15 @@ fn main() {
         frame_count += 1;
         let now = Instant::now();
         let elapsed = now.duration_since(last_instant);
-        let dt = elapsed.as_secs_f32().max(1.0);
+        let dt = elapsed.as_secs_f64().max(1.0);
 
-        let t = now.duration_since(start).as_secs_f32();
+        let t = now.duration_since(start).as_secs_f64();
 
         let speed = 1.0;
         let radius = 200.0;
 
-        // let angle = t * speed;
-        let angle = 4.1 as f32;
+        let angle = t * speed;
+        // let angle = 4.1 as f64;
         light_pos = Vec3 {
             x: angle.cos() * radius,
             y: 500.0,
@@ -280,7 +280,7 @@ fn main() {
         };
 
         if elapsed >= Duration::from_secs(1) {
-            let fps = frame_count as f32 / dt;
+            let fps = frame_count as f64 / dt;
             window.set_title(&format!("My Rust Framebuffer — {:.2} FPS", fps));
 
             frame_count = 0;

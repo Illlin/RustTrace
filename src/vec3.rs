@@ -2,17 +2,17 @@ use std::ops;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vec3 {
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-    pub(crate) z: f32,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) z: f64,
 }
 
 impl Vec3 {
-    pub(crate) fn new(x: f32, y: f32, z: f32) -> Vec3 {
+    pub(crate) fn new(x: f64, y: f64, z: f64) -> Vec3 {
         Vec3 { x, y, z }
     }
 
-    pub(crate) fn magnitude(self) -> f32 {
+    pub(crate) fn magnitude(self) -> f64 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 
@@ -28,7 +28,7 @@ impl Vec3 {
         }
     }
 
-    pub(crate) fn dot(self, other: Vec3) -> f32 {
+    pub(crate) fn dot(self, other: Vec3) -> f64 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
@@ -36,11 +36,11 @@ impl Vec3 {
         Vec3 {x: self.x.abs(), y: self.y.abs(), z: self.z.abs()}
     }
 
-    pub fn max(self, x: f32) -> Vec3 {
+    pub fn max(self, x: f64) -> Vec3 {
         Vec3 {x: self.x.max(x), y: self.y.max(x), z: self.z.max(x)}
     }
 
-    pub fn min(self, x: f32) -> Vec3 {
+    pub fn min(self, x: f64) -> Vec3 {
         Vec3 {x: self.x.min(x), y: self.y.min(x), z: self.z.min(x)}
     }
 
@@ -83,9 +83,9 @@ impl ops::Add<Vec3> for Vec3 {
     }
 }
 
-impl ops::Div<f32> for Vec3 {
+impl ops::Div<f64> for Vec3 {
     type Output = Vec3;
-    fn div(self, d: f32) -> Vec3 {
+    fn div(self, d: f64) -> Vec3 {
         Vec3 {
             x: self.x / d,
             y: self.y / d,
@@ -94,9 +94,9 @@ impl ops::Div<f32> for Vec3 {
     }
 }
 
-impl ops::Mul<f32> for Vec3 {
+impl ops::Mul<f64> for Vec3 {
     type Output = Vec3;
-    fn mul(self, d: f32) -> Vec3 {
+    fn mul(self, d: f64) -> Vec3 {
         Vec3 {
             x: self.x * d,
             y: self.y * d,

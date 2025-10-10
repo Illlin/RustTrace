@@ -3,37 +3,37 @@ use crate::vec3::Vec3;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
     pub colour: Vec3,
-    pub specular: f32,
+    pub specular: f64,
     pub mirror: bool,
-    pub mirror_mix: f32,
+    pub mirror_mix: f64,
 }
 
 impl Material {
-    pub fn new(colour: Vec3, specular: f32, mirror: bool, mirror_mix: f32) -> Self {
+    pub fn new(colour: Vec3, specular: f64, mirror: bool, mirror_mix: f64) -> Self {
         Self { colour, specular, mirror, mirror_mix }
     }
 }
 
 
 pub trait Sdf {
-    fn distance_to(&self, p: Vec3) -> f32;
+    fn distance_to(&self, p: Vec3) -> f64;
     fn get_material(&self, p: Vec3) -> Material;
 }
 
 pub struct Sphere {
-    pub radius: f32,
+    pub radius: f64,
     pub pos: Vec3,
     pub material: Material,
 }
 
 impl Sphere {
-    pub fn new(radius: f32, pos: Vec3, material: Material) -> Self {
+    pub fn new(radius: f64, pos: Vec3, material: Material) -> Self {
             Self { radius, pos, material }
         }
 }
 
 impl Sdf for Sphere {
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         let a = p - self.pos;
         a.magnitude() - self.radius
     }
@@ -55,7 +55,7 @@ impl Box {
 }
 
 impl Sdf for Box {
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         let p = p - self.pos;
         let q = p.abs() - self.sides;
         q.max(0.0).magnitude() + q.x.max(q.y.max(q.z)).min(0.0)
@@ -77,7 +77,7 @@ impl<A: Sdf, B: Sdf> Union<A, B> {
 }
 
 impl<A: Sdf, B: Sdf> Sdf for Union<A, B> {
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         let da = self.a.distance_to(p);
         let db = self.b.distance_to(p);
         da.min(db)
@@ -95,17 +95,17 @@ impl<A: Sdf, B: Sdf> Sdf for Union<A, B> {
 pub struct SmoothUnion<A: Sdf, B: Sdf> {
     pub(crate) a: A,
     pub(crate) b: B,
-    pub(crate) smooth: f32,
+    pub(crate) smooth: f64,
 }
 
 impl<A: Sdf, B: Sdf> SmoothUnion<A, B> {
-    pub fn new(a: A, b: B, smooth: f32) -> Self {
+    pub fn new(a: A, b: B, smooth: f64) -> Self {
         Self { a, b, smooth }
     }
 }
 
 impl<A: Sdf, B: Sdf> Sdf for SmoothUnion<A, B> {
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         let da = self.a.distance_to(p);
         let db = self.b.distance_to(p);
         let k = self.smooth * 4.0;
@@ -125,18 +125,18 @@ impl<A: Sdf, B: Sdf> Sdf for SmoothUnion<A, B> {
 
 pub struct Checker<A: Sdf> {
     pub a: A,
-    pub scale: f32,
+    pub scale: f64,
     pub material: Material,
 }
 
 impl<A: Sdf> Checker<A> {
-    pub fn new(a: A, scale: f32, material: Material) -> Self {
+    pub fn new(a: A, scale: f64, material: Material) -> Self {
         Self { a, scale, material}
     }
 }
 
 impl<A: Sdf> Sdf for Checker<A> {
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         self.a.distance_to(p)
     }
     fn get_material(&self, p: Vec3) -> Material {
@@ -153,17 +153,17 @@ impl<A: Sdf> Sdf for Checker<A> {
 
 pub struct Repeat<A: Sdf> {
     pub a: A,
-    pub scale: f32,
+    pub scale: f64,
 }
 
 impl<A: Sdf> Repeat<A> {
-    pub fn new(a: A, scale: f32) -> Self {
+    pub fn new(a: A, scale: f64) -> Self {
         Self { a, scale}
     }
 }
 
 impl<A: Sdf> Sdf for Repeat<A> {
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         self.a.distance_to(
             Vec3 { x: p.x % self.scale, y: p.y % self.scale, z: p.z % self.scale }
         )
@@ -175,9 +175,9 @@ impl<A: Sdf> Sdf for Repeat<A> {
 
 pub struct SpeedField<A: Sdf> {
     pub a: A,
-    pub cache: Vec<f32>,
+    pub cache: Vec<f64>,
     pub size: usize,
-    pub scale: f32,
+    pub scale: f64,
     pub centre: Vec3,
 }
 
@@ -186,24 +186,24 @@ impl<A: Sdf> SpeedField<A> {
         let size = 100;
         let scale = 1.0;
 
-        let rad = scale * 2.0f32.sqrt();
+        let rad = scale * 2.0f64.sqrt();
 
-        let mut cache = vec![0.0f32; size * size * size];
+        let mut cache = vec![0.0f64; size * size * size];
 
         // Compute known safe distance field
         let centre= Vec3 {
-            x: (size/2) as f32 * scale,
-            y: (size/2) as f32 * scale,
-            z: (size/2) as f32 * scale
+            x: (size/2) as f64 * scale,
+            y: (size/2) as f64 * scale,
+            z: (size/2) as f64 * scale
         };
         for z in 0..size {
-            let z_pos = scale * z as f32;
+            let z_pos = scale * z as f64;
             println!("{z}");
             for y in 0..size {
-                let y_pos = scale * y as f32;
+                let y_pos = scale * y as f64;
                 for x in 0..size {
                     let point = Vec3 {
-                        x: scale * x as f32,
+                        x: scale * x as f64,
                         y: y_pos,
                         z: z_pos,
                     } - centre;
@@ -222,7 +222,7 @@ impl<A: Sdf> SpeedField<A> {
 }
 
 impl<A: Sdf> Sdf for SpeedField<A> {
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         let local = p + self.centre;
         let size = self.size as isize;
 
@@ -256,13 +256,13 @@ impl<A: Sdf> Sdf for SpeedField<A> {
 pub struct Mandelbulb {
     pub power: u32,
     pub iterations: u32,
-    pub scale: f32,
+    pub scale: f64,
     pub pos: Vec3,
     pub material: Material,
 }
 
 impl Mandelbulb {
-    pub fn new(power: u32, iterations: u32, scale: f32, pos: Vec3, material: Material) -> Self {
+    pub fn new(power: u32, iterations: u32, scale: f64, pos: Vec3, material: Material) -> Self {
         Self {
             power,
             iterations,
@@ -277,12 +277,12 @@ impl Sdf for Mandelbulb {
     fn get_material(&self, _p: Vec3) -> Material {
         self.material
     }
-    fn distance_to(&self, p: Vec3) -> f32 {
+    fn distance_to(&self, p: Vec3) -> f64 {
         // move into fractal’s local space and scale
         let mut z = (p - self.pos) * self.scale;
-        let mut dr = 1.0_f32;
-        let mut r = 0.0_f32;
-        let powf = self.power as f32;
+        let mut dr = 1.0_f64;
+        let mut r = 0.0_f64;
+        let powf = self.power as f64;
 
         for _ in 0..self.iterations {
             r = z.magnitude();
