@@ -2,19 +2,17 @@ use crate::vec3::Vec3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
-    pub colour: Vec3,
-    pub specular: f64,
-    pub mirror: bool,
-    pub mirror_mix: f64,
+    pub albedo: Vec3,
+    pub f0: Vec3,
+    pub roughness: f64,
 }
 
 impl Material {
-    pub fn new(colour: Vec3, specular: f64, mirror: bool, mirror_mix: f64) -> Self {
+    pub fn new(albedo: Vec3, f0: Vec3, roughness: f64) -> Self {
         Self {
-            colour,
-            specular,
-            mirror,
-            mirror_mix,
+            albedo,
+            f0,
+            roughness
         }
     }
 }

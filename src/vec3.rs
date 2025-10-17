@@ -16,6 +16,10 @@ impl Vec3 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 
+    pub(crate) fn magnitude2(self) -> f64 {
+        (self.x * self.x + self.y * self.y + self.z * self.z)
+    }
+
     pub(crate) fn normalize(self) -> Vec3 {
         self / self.magnitude()
     }

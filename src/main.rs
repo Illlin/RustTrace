@@ -12,6 +12,7 @@ mod vec3;
 
 const WIDTH: usize = 2200;
 const HEIGHT: usize = 1300;
+const EPS: f64 = 1e-5;
 
 pub struct RayResults {
     pub final_position: Vec3,
@@ -25,15 +26,34 @@ pub struct RayInfo {
     pub max_depth: f64,
 }
 
-pub fn depth_to_gamma(depth: f64, min_depth: f64, max_depth: f64, gamma: f64) -> f64 {
-    let t = (depth - min_depth) / (max_depth - min_depth);
-    let t = t.clamp(0.0, 1.0);
-    t.powf(1.0 / gamma)
+pub struct Light {
+    pub position: Vec3,
+    pub color: Vec3,
+    pub intensity: f64,
 }
 
-pub fn depth_to_u32(depth: f64, min_depth: f64, max_depth: f64, gamma: f64) -> u32 {
-    let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
-    v.round().clamp(0.0, 255.0) as u32
+// Schlick’s approximation of Fresnel
+fn fresnel_schlick(cos_theta: f64, f0: Vec3) -> Vec3 {
+    f0 + (Vec3::new(1.0,1.0,1.0) - f0) * (1.0 - cos_theta).powf(5.0)
+}
+
+// GGX / Trowbridge‐Reitz normal distribution
+fn d_ggx(n_dot_h: f64, alpha: f64) -> f64 {
+    let a2 = alpha * alpha;
+    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    a2 / (PI * denom * denom)
+}
+
+// Schlick‐GGX Geometry term, single direction
+fn g1_schlick_ggx(n_dot_v: f64, k: f64) -> f64 {
+    n_dot_v / (n_dot_v * (1.0 - k) + k)
+}
+
+// Smith’s joint masking‐shadowing with Schlick‐GGX
+fn g_smith(n_dot_v: f64, n_dot_l: f64, alpha: f64) -> f64 {
+    // k = (alpha+1)^2 / 8 is a common choice
+    let k = (alpha + 1.0).powi(2) / 8.0;
+    g1_schlick_ggx(n_dot_v, k) * g1_schlick_ggx(n_dot_l, k)
 }
 
 fn cast_ray(scene: &impl Sdf, ray: &RayInfo, start_total_distance: f64, inside: bool) -> RayResults {
@@ -55,6 +75,73 @@ fn cast_ray(scene: &impl Sdf, ray: &RayInfo, start_total_distance: f64, inside: 
     }
 }
 
+fn shade_pbr(
+    scene: &impl Sdf,
+    hit_pos: Vec3,
+    normal: Vec3,
+    view_dir: Vec3,       // = -ray.direction
+    material: &Material,
+    light: Light,
+    safe_pos: Vec3,
+) -> Vec3
+{
+    // 1) build L, H, the various cosines
+    let to_light = (light.position - hit_pos);       // if directional light, this is infinite.
+    let light_dist2 = to_light.magnitude2();
+    let L = to_light.normalize();
+    let H = (view_dir + L).normalize();
+
+    let n_dot_l = normal.dot(L).max(0.0);
+    let n_dot_v = normal.dot(view_dir).max(0.0);
+    let n_dot_h = normal.dot(H).max(0.0);
+    let v_dot_h = view_dir.dot(H).max(0.0);
+    if n_dot_l <= 0.0 || n_dot_v <= 0.0 {
+        return Vec3::new(0.0, 0.0, 0.0);
+    }
+
+    // 2) shadow‐ray
+    let shadow_ray = RayInfo {
+        start_position: safe_pos,
+        cast_direction: to_light,
+        min_depth: EPS,
+        max_depth: to_light.magnitude(),
+    };
+    let shadow_cast = cast_ray(scene, &shadow_ray, 0.0, false);
+    if shadow_cast.distance <= shadow_ray.max_depth {
+        // in shadow: no direct lighting
+        return Vec3::new(0.0, 0.0, 0.0);
+    }
+
+    // 3) fetch BRDF parameters
+    let albedo     = material.albedo;
+    let f0         = material.f0;
+    // remap artist roughness²→alpha
+    let alpha      = material.roughness * material.roughness;
+
+    // 4) compute D, G, F
+    let D = d_ggx(n_dot_h, alpha);
+    let G = g_smith(n_dot_v, n_dot_l, alpha);
+    let F = fresnel_schlick(v_dot_h, f0);
+
+    // 5) Specular term (Cook‐Torrance)
+    //    note the +EPS in denom to avoid NaNs on a perfect mirror
+    let spec_numer = F *D * G;
+    let spec_denom = 4.0 * n_dot_v * n_dot_l + EPS;
+    let specular = spec_numer / spec_denom;
+
+    // 6) Diffuse term: energy‐conserving Lambert
+    //    kd = 1 – ks  (we do it per‐channel on Vec3!)
+    let kd = Vec3::new(1.0, 1.0, 1.0) - F;
+    let diffuse = kd * albedo / PI;
+
+    // 7) light radiance & final
+    //    if it’s a point light: falloff = 1 / dist²
+    //    if it’s directional: you can just use 1.0
+    let radiance = light.color * light.intensity / light_dist2;
+    let base = (diffuse + specular) * radiance * n_dot_l;
+    base
+}
+
 fn get_ray_colour(
     scene: &impl Sdf,
     ray: &RayInfo,
@@ -62,16 +149,13 @@ fn get_ray_colour(
     start_total_distance: f64,
     bounces: usize,
 ) -> Vec3 {
+    let light_colour = Vec3::new(1.0, 1.0, 1.0);
+    let sky_colour = Vec3::new(1.0, 1.0, 1.0);
     let scene_ray = cast_ray(scene, ray, start_total_distance, false);
     if scene_ray.distance >= ray.max_depth {
         // Sky box
-        return Vec3 {
-            x: 0.59,
-            y: 0.80,
-            z: 0.91,
-        };
+        return sky_colour
     }
-    let mat = scene.get_material(scene_ray.final_position);
 
     let eps = 1e-2;
     let dx = scene.distance_to(scene_ray.final_position + Vec3::new(eps, 0.0, 0.0))
@@ -86,57 +170,52 @@ fn get_ray_colour(
         y: dy,
         z: dz,
     }
-    .normalize();
+        .normalize();
+
+    let mat = scene.get_material(scene_ray.final_position);
+    let light = Light {
+        position : light_pos,
+        color : light_colour,
+        intensity : 500000.0,
+    };
 
     let safe_pos = scene_ray.final_position + (-ray.cast_direction * ray.min_depth * 10.0);
 
-    // Phong Lighting
-    let light_vec = (light_pos - scene_ray.final_position).normalize();
-
-    // Shadow
-    let light_ray = RayInfo {
-        start_position: safe_pos,
-        cast_direction: light_vec,
-        min_depth: ray.min_depth,
-        max_depth: ray.max_depth,
-    };
-
-    let light_check = cast_ray(scene, &light_ray, start_total_distance, false);
-
-    let gamma_lightness = if light_check.distance >= light_ray.max_depth {
-        let diffuse = normal.dot(light_vec).max(0.0);
-        let reflection = light_vec.reflect(normal);
-        let specular = (-light_ray.cast_direction)
-            .dot(reflection)
-            .max(0.0)
-            .powi(32)
-            * mat.specular;
-        let lightness = (specular + diffuse + 0.1) / 2.1;
-        depth_to_gamma(lightness, 0.0, 1.0, 2.2)
-    } else {
-        0.1
-    };
-
-    let result = mat.colour * gamma_lightness;
-
-    if mat.mirror && (bounces < 3) {
+    let base = shade_pbr( scene, scene_ray.final_position, normal, -ray.cast_direction, &mat, light, safe_pos );
+    if mat.roughness == 0.0 && bounces < 3 {
         let reflection_ray = RayInfo {
             start_position: safe_pos,
-            cast_direction: ray.cast_direction.reflect(normal),
+            cast_direction: ray.cast_direction.reflect(normal).normalize(),
             min_depth: ray.min_depth,
             max_depth: ray.max_depth,
         };
-        return get_ray_colour(
+
+        let mirror_col = get_ray_colour(
             scene,
             &reflection_ray,
             light_pos,
             scene_ray.distance,
             bounces + 1,
-        ) * (1.0 - mat.mirror_mix)
-            + (result * mat.mirror_mix);
+        );
+        return mirror_col;
     }
+    base
+}
 
-    result
+fn linear_to_srgb_channel(c: f64) -> f64 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.0031308 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0/2.4) - 0.055
+    }
+}
+fn to_srgb(linear: Vec3) -> Vec3 {
+    Vec3::new(
+        linear_to_srgb_channel(linear.x),
+        linear_to_srgb_channel(linear.y),
+        linear_to_srgb_channel(linear.z),
+    )
 }
 
 fn get_pixel_colour(
@@ -172,7 +251,8 @@ fn get_pixel_colour(
         max_depth: max_d,
     };
 
-    let result = get_ray_colour(scene, &ray, light_pos, 0.0, 0);
+    let result = to_srgb(get_ray_colour(scene, &ray, light_pos, 0.0, 0));
+
 
     let r = (result.x * 255.0).round() as u32;
     let g = (result.y * 255.0).round() as u32;
@@ -222,15 +302,14 @@ fn main() {
         z: 0.0,
     };
 
-    let red_mat = Material::new(Vec3::new(0.8, 0.2, 0.2), 0.8, false, 0.0);
-    let white_mat = Material::new(Vec3::new(1.0, 1.0, 1.0), 0.1, false, 0.0);
-    let red_mirror_mat = Material::new(Vec3::new(0.8, 0.2, 0.2), 1.0, true, 0.5);
-    let blue_mirror_mat = Material::new(Vec3::new(0.2, 0.2, 0.8), 1.0, true, 0.5);
-    let black_mat = Material::new(Vec3::new(0.1, 0.1, 0.1), 1.0, false, 0.0);
-    let green_mat = Material::new(Vec3::new(0.2, 0.8, 0.2), 0.8, false, 0.0);
+    let white_mat = Material::new(Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.04, 0.04, 0.04), 0.8);
+    let red_mirror_mat = Material::new(Vec3::new(0.9, 0.7, 0.4), Vec3::new(1.0, 1.0, 1.0), 0.0);
+    let black_mat = Material::new(Vec3::new(0.1, 0.1, 0.1), Vec3::new(0.04, 0.04, 0.04), 0.8);
+    let green_mat = Material::new(Vec3::new(0.2, 0.8, 0.2), Vec3::new(0.04, 0.04, 0.04), 0.8);
 
-    let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2), 0.2, false, 0.96);
-    let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4), 0.2, false, 0.96);
+
+    let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2), Vec3::new(0.04, 0.04, 0.04), 0.8);
+    let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4), Vec3::new(0.04, 0.04, 0.04), 0.8);
 
     let shapes: Vec<Box<dyn Sdf>> = vec![
         Box::new(Sphere::new(
@@ -241,7 +320,7 @@ fn main() {
         Box::new(Sphere::new(
             8.0,
             Vec3::new(25.0, -12.0, 10.0),
-            blue_mirror_mat,
+            red_mirror_mat,
         )),
         Box::new(SmoothUnion::new(
             Sphere::new(8.0, Vec3::new(0.0, 11.0, 20.0), white_mat),
@@ -259,7 +338,7 @@ fn main() {
             Vec3::new(0.0, 0.0, 5.0),
             green_mat,
         )),
-        Box::new(Sphere::new(3.0, Vec3::new(10.0, 5.0, 20.0), red_mat)),
+        Box::new(Sphere::new(3.0, Vec3::new(10.0, 5.0, 20.0), green_mat)),
         Box::new(Checker::new(
             Cuboid::new(
                 Vec3::new(50.0, 1.0, 50.0),
@@ -364,31 +443,6 @@ fn main() {
                 }
             }
         }
-
-        // for y in 0..render_height {
-        //     for x in 0..render_width {
-        //         let px = get_pixel_colour(
-        //             x,
-        //             y,
-        //             render_width,
-        //             render_height,
-        //             &scene,
-        //             cam_pos,
-        //             screen_x,
-        //             screen_y,
-        //             screen_pos,
-        //             screen_width,
-        //             light_pos,
-        //         );
-        //
-        //         for dy in 0..screen_multiplier {
-        //             for dx in 0..screen_multiplier {
-        //                 let idx = (y * screen_multiplier + dy) * WIDTH + x * screen_multiplier + dx;
-        //                 buffer[idx] = px;
-        //             }
-        //         }
-        //     }
-        // }
 
         let speed = 1.0; // world units per second
         if window.is_key_down(Key::W) {
