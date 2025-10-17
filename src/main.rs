@@ -1,10 +1,10 @@
 use crate::shapes::{Checker, Mandelbulb, SpeedField};
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use shapes::{Cuboid, Material, Sdf, SmoothUnion, Sphere, Union, UnionN};
 use std::f64::consts::PI;
 use std::time::{Duration, Instant};
-use rayon::ThreadPoolBuilder;
 use vec3::Vec3;
 
 mod shapes;
@@ -35,10 +35,14 @@ pub fn depth_to_u32(depth: f64, min_depth: f64, max_depth: f64, gamma: f64) -> u
     let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
     v.round().clamp(0.0, 255.0) as u32
 }
-#[inline]
-fn cast_ray(scene: &impl Sdf, ray: &RayInfo, start_total_distance: f64) -> RayResults {
+
+fn cast_ray(scene: &impl Sdf, ray: &RayInfo, start_total_distance: f64, inside: bool) -> RayResults {
+    let sign = match inside {
+        false => 1.0,
+        true => -1.0,
+    };
     let mut total_dist = start_total_distance;
-    let mut dist = scene.distance_to(ray.start_position);
+    let mut dist = scene.distance_to(ray.start_position) * sign ;
     let mut pos = ray.start_position;
     while (dist > ray.min_depth) && (total_dist < ray.max_depth) {
         total_dist += dist;
@@ -58,7 +62,7 @@ fn get_ray_colour(
     start_total_distance: f64,
     bounces: usize,
 ) -> Vec3 {
-    let scene_ray = cast_ray(scene, ray, start_total_distance);
+    let scene_ray = cast_ray(scene, ray, start_total_distance, false);
     if scene_ray.distance >= ray.max_depth {
         // Sky box
         return Vec3 {
@@ -84,7 +88,7 @@ fn get_ray_colour(
     }
     .normalize();
 
-    let safe_pos = scene_ray.final_position + (-ray.cast_direction * ray.min_depth * 1.3);
+    let safe_pos = scene_ray.final_position + (-ray.cast_direction * ray.min_depth * 10.0);
 
     // Phong Lighting
     let light_vec = (light_pos - scene_ray.final_position).normalize();
@@ -97,7 +101,7 @@ fn get_ray_colour(
         max_depth: ray.max_depth,
     };
 
-    let light_check = cast_ray(scene, &light_ray, start_total_distance);
+    let light_check = cast_ray(scene, &light_ray, start_total_distance, false);
 
     let gamma_lightness = if light_check.distance >= light_ray.max_depth {
         let diffuse = normal.dot(light_vec).max(0.0);
@@ -173,10 +177,10 @@ fn get_pixel_colour(
 }
 
 fn main() {
-    ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build_global()
-        .expect("Failed to build global Rayon thread pool");
+    // ThreadPoolBuilder::new()
+    //     .num_threads(6)
+    //     .build_global()
+    //     .expect("Failed to build global Rayon thread pool");
 
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
 
@@ -224,48 +228,47 @@ fn main() {
     let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2), 0.2, false, 0.96);
     let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4), 0.2, false, 0.96);
 
-    let scene = SpeedField::new(Union::new(
-        Union::new(
-            Sphere::new(8.0, Vec3::new(-5.0, -12.0, 0.0), red_mirror_mat),
-            Sphere::new(8.0, Vec3::new(25.0, -12.0, 10.0), blue_mirror_mat),
-        ),
-        Union::new(
-            Union::new(
-                SmoothUnion::new(
-                    Sphere::new(8.0, Vec3::new(0.0, 11.0, 20.0), white_mat),
-                    SmoothUnion::new(
-                        Sphere::new(12.0, Vec3::new(0.0, -12.0, 20.0), white_mat),
-                        Sphere::new(10.0, Vec3::new(0.0, 0.0, 20.0), white_mat),
-                        0.3,
-                    ),
-                    0.3,
-                ),
-                Union::new(
-                    Sphere::new(1.0, Vec3::new(-3.0, 12.5, 12.7), black_mat),
-                    Sphere::new(1.0, Vec3::new(3.0, 12.5, 12.7), black_mat),
-                ),
+    let shapes: Vec<Box<dyn Sdf>> = vec![
+        Box::new(Sphere::new(
+            8.0,
+            Vec3::new(-5.0, -12.0, 0.0),
+            red_mirror_mat,
+        )),
+        Box::new(Sphere::new(
+            8.0,
+            Vec3::new(25.0, -12.0, 10.0),
+            blue_mirror_mat,
+        )),
+        Box::new(SmoothUnion::new(
+            Sphere::new(8.0, Vec3::new(0.0, 11.0, 20.0), white_mat),
+            SmoothUnion::new(
+                Sphere::new(12.0, Vec3::new(0.0, -12.0, 20.0), white_mat),
+                Sphere::new(10.0, Vec3::new(0.0, 0.0, 20.0), white_mat),
+                0.3,
             ),
-            Union::new(
-                Union::new(
-                    Cuboid::new(
-                        Vec3::new(1.0, 1.0, 1.0),
-                        Vec3::new(0.0, 0.0, 5.0),
-                        green_mat,
-                    ),
-                    Sphere::new(3.0, Vec3::new(10.0, 5.0, 20.0), red_mat),
-                ),
-                Checker::new(
-                    Cuboid::new(
-                        Vec3::new(50.0, 1.0, 50.0),
-                        Vec3::new(0.0, -20.0, 0.0),
-                        dark_brown,
-                    ),
-                    0.1,
-                    light_brown,
-                ),
+            0.3,
+        )),
+        Box::new(Sphere::new(1.0, Vec3::new(-3.0, 12.5, 12.7), black_mat)),
+        Box::new(Sphere::new(1.0, Vec3::new(3.0, 12.5, 12.7), black_mat)),
+        Box::new(Cuboid::new(
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(0.0, 0.0, 5.0),
+            green_mat,
+        )),
+        Box::new(Sphere::new(3.0, Vec3::new(10.0, 5.0, 20.0), red_mat)),
+        Box::new(Checker::new(
+            Cuboid::new(
+                Vec3::new(50.0, 1.0, 50.0),
+                Vec3::new(0.0, -20.0, 0.0),
+                dark_brown,
             ),
-        ),
-    ));
+            0.1,
+            light_brown,
+        )),
+    ];
+
+    // let scene = SpeedField::new(UnionN::new(shapes));
+    let scene = UnionN::new(shapes);
 
     // let scene = CheckerFloor { height: 10.0, scale: 10.0, radius: 1.0, mat1: green_mat, mat2: red_mat};
     // let scene = Mandelbulb { power: 8, iterations: 12, scale: 1.0, pos: Vec3 {x: 0.0, y: 0.0, z: 0.0}};
@@ -307,7 +310,7 @@ fn main() {
         let screen_y = up - look_dir * look_dir.dot(up);
         let screen_x = look_dir.cross(up);
 
-        let chunk_size: usize = 32;
+        let chunk_size: usize = 16;
         let x_chunks = render_width / chunk_size;
         let y_chunks = render_height / chunk_size;
         let no_chunks = x_chunks * y_chunks;

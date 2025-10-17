@@ -10,12 +10,16 @@ pub struct Material {
 
 impl Material {
     pub fn new(colour: Vec3, specular: f64, mirror: bool, mirror_mix: f64) -> Self {
-        Self { colour, specular, mirror, mirror_mix }
+        Self {
+            colour,
+            specular,
+            mirror,
+            mirror_mix,
+        }
     }
 }
 
-
-pub trait Sdf {
+pub trait Sdf: Send + Sync {
     fn distance_to(&self, p: Vec3) -> f64;
     fn get_material(&self, p: Vec3) -> Material;
 }
@@ -28,8 +32,12 @@ pub struct Sphere {
 
 impl Sphere {
     pub fn new(radius: f64, pos: Vec3, material: Material) -> Self {
-            Self { radius, pos, material }
+        Self {
+            radius,
+            pos,
+            material,
         }
+    }
 }
 
 impl Sdf for Sphere {
@@ -50,7 +58,11 @@ pub struct Cuboid {
 
 impl Cuboid {
     pub fn new(sides: Vec3, pos: Vec3, material: Material) -> Self {
-        Self { sides, pos, material }
+        Self {
+            sides,
+            pos,
+            material,
+        }
     }
 }
 
@@ -86,34 +98,119 @@ impl<A: Sdf, B: Sdf> Sdf for Union<A, B> {
         let da = self.a.distance_to(p);
         let db = self.b.distance_to(p);
         if da < db {
-            return self.a.get_material(p)
+            return self.a.get_material(p);
         }
         self.b.get_material(p)
     }
 }
 
 pub struct UnionN {
-    pub subs: Vec<Box<dyn Sdf>>
+    pub subs: Vec<Box<dyn Sdf>>,
+    pub distance_cache: Vec<f64>,
+    pub collision_cache: Vec<u64>,
+    pub size: usize,
+    pub scale: f64,
+    pub centre: Vec3,
 }
 
 impl UnionN {
     pub fn new<I: IntoIterator<Item = Box<dyn Sdf>>>(iter: I) -> Self {
-        UnionN { subs: iter.into_iter().collect() }
+        let scene: Vec<Box<dyn Sdf>> = iter.into_iter().collect();
+        let size = 100;
+        let scale = 1.0;
+
+        let rad = scale * 2.0f64.sqrt();
+        let two_r = rad * 3.0;
+
+        let mut distance_cache = vec![0.0; size * size * size];
+        let mut collision_cache = vec![0; size * size * size];
+
+        // Compute distance field
+        let centre = Vec3::new((size / 2) as f64, (size / 2) as f64, (size / 2) as f64);
+
+        for index in 0..distance_cache.len() {
+            let x_idx = (index % size) as f64;
+            let y_idx = ((index / size) % size) as f64;
+            let z_idx = (index / (size * size)) as f64;
+            let point = Vec3::new(x_idx * scale, y_idx * scale, z_idx * scale) - centre;
+            let (closest_idx, dist) = scene
+                .iter()
+                .enumerate()
+                .map(|(i, sdf)| (i, sdf.distance_to(point)))
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .unwrap();
+
+            if dist > rad {
+                distance_cache[index] = dist - rad;
+            }
+            let collision_no: u64 = scene
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (s.distance_to(point) < two_r) as u64 * 2u64.pow(1 + i as u32))
+                .sum();
+            collision_cache[index] = match collision_no {
+                0 =>  2u64.pow(1 + closest_idx as u32),
+                _ => collision_no
+            };
+        }
+        UnionN {
+            subs: scene,
+            distance_cache,
+            collision_cache,
+            size,
+            scale,
+            centre,
+        }
     }
 }
 
 impl Sdf for UnionN {
     fn distance_to(&self, p: Vec3) -> f64 {
-        // just take the min over all sub-shapes
+        // return self.subs
+        //     .iter()
+        //     .enumerate()
+        //     .map(
+        //         |(i, s)| s.distance_to(p)
+        //     )
+        //     .fold(f64::INFINITY, f64::min);
+
+        let local = p + self.centre;
+        let size = self.size as isize;
+
+        let xi = (local.x / self.scale).floor() as isize;
+        let yi = (local.y / self.scale).floor() as isize;
+        let zi = (local.z / self.scale).floor() as isize;
+
+        if xi < 0 || yi < 0 || zi < 0 || xi >= size || yi >= size || zi >= size {
+            return 10000000.0;
+        }
+
+        let s = size;
+        let idx = xi + yi * s + zi * (s * s);
+
+        let dist = self.distance_cache[idx as usize];
+        if dist > 0.5 {
+            return dist;
+        }
+
+        // Expensive check
+        let collision_mask = self.collision_cache[idx as usize];
+
         self.subs
             .iter()
-            .map(|s| s.distance_to(p))
+            .enumerate()
+            .map(
+                |(i, s)| match (2u64.pow(1 + i as u32) & collision_mask > 0) {
+                    true => s.distance_to(p),
+                    _ => f64::INFINITY,
+                },
+            )
             .fold(f64::INFINITY, f64::min)
     }
 
     fn get_material(&self, p: Vec3) -> Material {
-        // find the sub-shape with the smallest distance and return its material
-        let (best_shape, _) = self.subs
+        let (best_shape, _) = self
+            .subs
             .iter()
             .map(|s| (s, s.distance_to(p)))
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
@@ -139,15 +236,15 @@ impl<A: Sdf, B: Sdf> Sdf for SmoothUnion<A, B> {
         let da = self.a.distance_to(p);
         let db = self.b.distance_to(p);
         let k = self.smooth * 4.0;
-        let h = (k-(da-db).abs()).max(0.0);
-        da.min(db) - h*h*0.25/k
+        let h = (k - (da - db).abs()).max(0.0);
+        da.min(db) - h * h * 0.25 / k
     }
     fn get_material(&self, p: Vec3) -> Material {
         // Todo blend mats
         let da = self.a.distance_to(p);
         let db = self.b.distance_to(p);
         if da < db {
-            return self.a.get_material(p)
+            return self.a.get_material(p);
         }
         self.b.get_material(p)
     }
@@ -161,7 +258,7 @@ pub struct Checker<A: Sdf> {
 
 impl<A: Sdf> Checker<A> {
     pub fn new(a: A, scale: f64, material: Material) -> Self {
-        Self { a, scale, material}
+        Self { a, scale, material }
     }
 }
 
@@ -188,15 +285,17 @@ pub struct Repeat<A: Sdf> {
 
 impl<A: Sdf> Repeat<A> {
     pub fn new(a: A, scale: f64) -> Self {
-        Self { a, scale}
+        Self { a, scale }
     }
 }
 
 impl<A: Sdf> Sdf for Repeat<A> {
     fn distance_to(&self, p: Vec3) -> f64 {
-        self.a.distance_to(
-            Vec3 { x: p.x % self.scale, y: p.y % self.scale, z: p.z % self.scale }
-        )
+        self.a.distance_to(Vec3 {
+            x: p.x % self.scale,
+            y: p.y % self.scale,
+            z: p.z % self.scale,
+        })
     }
     fn get_material(&self, p: Vec3) -> Material {
         self.a.get_material(p)
@@ -221,10 +320,10 @@ impl<A: Sdf> SpeedField<A> {
         let mut cache = vec![0.0f64; size * size * size];
 
         // Compute known safe distance field
-        let centre= Vec3 {
-            x: (size/2) as f64 * scale,
-            y: (size/2) as f64 * scale,
-            z: (size/2) as f64 * scale
+        let centre = Vec3 {
+            x: (size / 2) as f64 * scale,
+            y: (size / 2) as f64 * scale,
+            z: (size / 2) as f64 * scale,
         };
         for z in 0..size {
             let z_pos = scale * z as f64;
@@ -244,10 +343,16 @@ impl<A: Sdf> SpeedField<A> {
                 }
             }
         }
-        let arr_size = size*size*size;
+        let arr_size = size * size * size;
         println!("{arr_size}");
 
-        Self { a, cache, size, scale, centre }
+        Self {
+            a,
+            cache,
+            size,
+            scale,
+            centre,
+        }
     }
 }
 
@@ -260,11 +365,7 @@ impl<A: Sdf> Sdf for SpeedField<A> {
         let yi = (local.y / self.scale).floor() as isize;
         let zi = (local.z / self.scale).floor() as isize;
 
-        if xi < 0 || yi < 0 || zi < 0
-            || xi >= size
-            || yi >= size
-            || zi >= size
-        {
+        if xi < 0 || yi < 0 || zi < 0 || xi >= size || yi >= size || zi >= size {
             return 10000000.0;
         }
 
@@ -298,7 +399,7 @@ impl Mandelbulb {
             iterations,
             scale,
             pos,
-            material
+            material,
         }
     }
 }
@@ -336,11 +437,8 @@ impl Sdf for Mandelbulb {
             let sin_p = new_phi.sin();
             let cos_p = new_phi.cos();
 
-            z = Vec3::new(
-                zr * sin_t * cos_p,
-                zr * sin_t * sin_p,
-                zr * cos_t,
-            ) + (p - self.pos) * self.scale;
+            z = Vec3::new(zr * sin_t * cos_p, zr * sin_t * sin_p, zr * cos_t)
+                + (p - self.pos) * self.scale;
         }
 
         // distance estimate
