@@ -10,8 +10,8 @@ use vec3::Vec3;
 mod shapes;
 mod vec3;
 
-const WIDTH: usize = 1280;
-const HEIGHT: usize = 1280;
+const WIDTH: usize = 2200;
+const HEIGHT: usize = 1300;
 
 pub struct RayResults {
     pub final_position: Vec3,
@@ -155,9 +155,13 @@ fn get_pixel_colour(
     let min_d: f64 = 0.001;
     let max_d: f64 = 1e3;
 
+    let aspect_ratio  = width as f64 / height as f64;
+    let screen_height = screen_width / aspect_ratio;
+
     // Get point on screen.
     let screen_x_pos = ((x as f64 - width as f64 / 2.0) / width as f64) * screen_width;
-    let screen_y_pos = ((y as f64 - height as f64 / 2.0) / height as f64) * screen_width;
+    let screen_y_pos = ((y as f64 - height as f64 / 2.0) / height as f64) * screen_height;
+
     let pixel_pos = screen_pos + screen_x * screen_x_pos - screen_y * screen_y_pos;
     let cast_dir = (pixel_pos - cam_pos).normalize();
 
@@ -307,8 +311,9 @@ fn main() {
 
         let look_dir = (look_pos - cam_pos).normalize();
         let screen_pos = cam_pos + look_dir * screen_distance;
-        let screen_y = up - look_dir * look_dir.dot(up);
-        let screen_x = look_dir.cross(up);
+        let screen_x = look_dir.cross(up).normalize();
+        let screen_y = screen_x.cross(look_dir).normalize();
+
 
         let chunk_size: usize = 16;
         let x_chunks = render_width / chunk_size;
@@ -320,7 +325,7 @@ fn main() {
             .map(|chunk_idx| {
                 let mut chunk_buffer = vec![0u32; chunk_size * chunk_size];
                 let chunk_x = (chunk_idx % x_chunks) * chunk_size;
-                let chunk_y = (chunk_idx / y_chunks) * chunk_size;
+                let chunk_y = (chunk_idx / x_chunks) * chunk_size;
                 for y in 0..chunk_size {
                     for x in 0..chunk_size {
                         let px = get_pixel_colour(
