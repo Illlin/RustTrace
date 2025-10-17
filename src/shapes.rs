@@ -42,19 +42,19 @@ impl Sdf for Sphere {
     }
 }
 
-pub struct Box {
+pub struct Cuboid {
     pub sides: Vec3,
     pub pos: Vec3,
     pub material: Material,
 }
 
-impl Box {
+impl Cuboid {
     pub fn new(sides: Vec3, pos: Vec3, material: Material) -> Self {
         Self { sides, pos, material }
     }
 }
 
-impl Sdf for Box {
+impl Sdf for Cuboid {
     fn distance_to(&self, p: Vec3) -> f64 {
         let p = p - self.pos;
         let q = p.abs() - self.sides;
@@ -89,6 +89,36 @@ impl<A: Sdf, B: Sdf> Sdf for Union<A, B> {
             return self.a.get_material(p)
         }
         self.b.get_material(p)
+    }
+}
+
+pub struct UnionN {
+    pub subs: Vec<Box<dyn Sdf>>
+}
+
+impl UnionN {
+    pub fn new<I: IntoIterator<Item = Box<dyn Sdf>>>(iter: I) -> Self {
+        UnionN { subs: iter.into_iter().collect() }
+    }
+}
+
+impl Sdf for UnionN {
+    fn distance_to(&self, p: Vec3) -> f64 {
+        // just take the min over all sub-shapes
+        self.subs
+            .iter()
+            .map(|s| s.distance_to(p))
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    fn get_material(&self, p: Vec3) -> Material {
+        // find the sub-shape with the smallest distance and return its material
+        let (best_shape, _) = self.subs
+            .iter()
+            .map(|s| (s, s.distance_to(p)))
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .unwrap();
+        best_shape.get_material(p)
     }
 }
 

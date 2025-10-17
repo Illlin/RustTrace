@@ -1,12 +1,14 @@
-use std::f64::consts::PI;
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
-use std::time::{Duration, Instant};
-use vec3::Vec3;
-use shapes::{Sphere, Sdf, Union, Box, SmoothUnion, Material};
 use crate::shapes::{Checker, Mandelbulb, SpeedField};
+use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use rayon::prelude::*;
+use shapes::{Cuboid, Material, Sdf, SmoothUnion, Sphere, Union, UnionN};
+use std::f64::consts::PI;
+use std::time::{Duration, Instant};
+use rayon::ThreadPoolBuilder;
+use vec3::Vec3;
 
-mod vec3;
 mod shapes;
+mod vec3;
 
 const WIDTH: usize = 1280;
 const HEIGHT: usize = 1280;
@@ -23,32 +25,18 @@ pub struct RayInfo {
     pub max_depth: f64,
 }
 
-pub fn depth_to_gamma(
-    depth: f64,
-    min_depth: f64,
-    max_depth: f64,
-    gamma: f64,
-) -> f64 {
+pub fn depth_to_gamma(depth: f64, min_depth: f64, max_depth: f64, gamma: f64) -> f64 {
     let t = (depth - min_depth) / (max_depth - min_depth);
     let t = t.clamp(0.0, 1.0);
     t.powf(1.0 / gamma)
 }
 
-pub fn depth_to_u32(
-    depth: f64,
-    min_depth: f64,
-    max_depth: f64,
-    gamma: f64,
-) -> u32 {
+pub fn depth_to_u32(depth: f64, min_depth: f64, max_depth: f64, gamma: f64) -> u32 {
     let v = depth_to_gamma(depth, min_depth, max_depth, gamma);
     v.round().clamp(0.0, 255.0) as u32
 }
 #[inline]
-fn cast_ray(
-    scene: &impl Sdf,
-    ray: &RayInfo,
-    start_total_distance: f64,
-) -> RayResults {
+fn cast_ray(scene: &impl Sdf, ray: &RayInfo, start_total_distance: f64) -> RayResults {
     let mut total_dist = start_total_distance;
     let mut dist = scene.distance_to(ray.start_position);
     let mut pos = ray.start_position;
@@ -70,23 +58,31 @@ fn get_ray_colour(
     start_total_distance: f64,
     bounces: usize,
 ) -> Vec3 {
-    let scene_ray = cast_ray(
-        scene,
-        ray,
-        start_total_distance,
-    );
+    let scene_ray = cast_ray(scene, ray, start_total_distance);
     if scene_ray.distance >= ray.max_depth {
         // Sky box
-        return Vec3 { x: 0.59, y: 0.80, z: 0.91 };
+        return Vec3 {
+            x: 0.59,
+            y: 0.80,
+            z: 0.91,
+        };
     }
     let mat = scene.get_material(scene_ray.final_position);
 
     let eps = 1e-2;
-    let dx = scene.distance_to(scene_ray.final_position + Vec3::new(eps, 0.0, 0.0)) - scene.distance_to(scene_ray.final_position - Vec3::new(eps, 0.0, 0.0));
-    let dy = scene.distance_to(scene_ray.final_position + Vec3::new(0.0, eps, 0.0)) - scene.distance_to(scene_ray.final_position - Vec3::new(0.0, eps, 0.0));
-    let dz = scene.distance_to(scene_ray.final_position + Vec3::new(0.0, 0.0, eps)) - scene.distance_to(scene_ray.final_position - Vec3::new(0.0, 0.0, eps));
+    let dx = scene.distance_to(scene_ray.final_position + Vec3::new(eps, 0.0, 0.0))
+        - scene.distance_to(scene_ray.final_position - Vec3::new(eps, 0.0, 0.0));
+    let dy = scene.distance_to(scene_ray.final_position + Vec3::new(0.0, eps, 0.0))
+        - scene.distance_to(scene_ray.final_position - Vec3::new(0.0, eps, 0.0));
+    let dz = scene.distance_to(scene_ray.final_position + Vec3::new(0.0, 0.0, eps))
+        - scene.distance_to(scene_ray.final_position - Vec3::new(0.0, 0.0, eps));
 
-    let normal = Vec3 { x: dx, y: dy, z: dz }.normalize();
+    let normal = Vec3 {
+        x: dx,
+        y: dy,
+        z: dz,
+    }
+    .normalize();
 
     let safe_pos = scene_ray.final_position + (-ray.cast_direction * ray.min_depth * 1.3);
 
@@ -98,19 +94,19 @@ fn get_ray_colour(
         start_position: safe_pos,
         cast_direction: light_vec,
         min_depth: ray.min_depth,
-        max_depth: ray.max_depth
+        max_depth: ray.max_depth,
     };
 
-    let light_check = cast_ray(
-        scene,
-        &light_ray,
-        start_total_distance,
-    );
+    let light_check = cast_ray(scene, &light_ray, start_total_distance);
 
     let gamma_lightness = if light_check.distance >= light_ray.max_depth {
         let diffuse = normal.dot(light_vec).max(0.0);
         let reflection = light_vec.reflect(normal);
-        let specular = (-light_ray.cast_direction).dot(reflection).max(0.0).powi(32) * mat.specular;
+        let specular = (-light_ray.cast_direction)
+            .dot(reflection)
+            .max(0.0)
+            .powi(32)
+            * mat.specular;
         let lightness = (specular + diffuse + 0.1) / 2.1;
         depth_to_gamma(lightness, 0.0, 1.0, 2.2)
     } else {
@@ -124,7 +120,7 @@ fn get_ray_colour(
             start_position: safe_pos,
             cast_direction: ray.cast_direction.reflect(normal),
             min_depth: ray.min_depth,
-            max_depth: ray.max_depth
+            max_depth: ray.max_depth,
         };
         return get_ray_colour(
             scene,
@@ -132,7 +128,8 @@ fn get_ray_colour(
             light_pos,
             scene_ray.distance,
             bounces + 1,
-        ) * (1.0 - mat.mirror_mix) + (result * mat.mirror_mix);
+        ) * (1.0 - mat.mirror_mix)
+            + (result * mat.mirror_mix);
     }
 
     result
@@ -164,16 +161,10 @@ fn get_pixel_colour(
         start_position: cam_pos,
         cast_direction: cast_dir,
         min_depth: min_d,
-        max_depth: max_d
+        max_depth: max_d,
     };
 
-    let result = get_ray_colour(
-        scene,
-        &ray,
-        light_pos,
-        0.0,
-        0,
-    );
+    let result = get_ray_colour(scene, &ray, light_pos, 0.0, 0);
 
     let r = (result.x * 255.0).round() as u32;
     let g = (result.y * 255.0).round() as u32;
@@ -181,8 +172,12 @@ fn get_pixel_colour(
     (255 << 24) | (r << 16) | (g << 8) | b
 }
 
-
 fn main() {
+    ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build_global()
+        .expect("Failed to build global Rayon thread pool");
+
     let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
 
     let mut window = Window::new(
@@ -190,69 +185,87 @@ fn main() {
         WIDTH,
         HEIGHT,
         WindowOptions::default(),
-    ).unwrap();
+    )
+    .unwrap();
 
     let mut screen_multiplier: usize = 4;
 
     let mut last_instant = Instant::now();
     let mut frame_count = 0u32;
 
-    let mut cam_pos = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
-    let mut look_pos = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    let mut cam_pos = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: -10.0,
+    };
+    let mut look_pos = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
     let mut screen_distance = 0.5;
     let mut screen_width = 2.0;
 
     let mut light_pos;
 
-    let up = Vec3 { x: 0.0, y: 1.0, z: 0.0 };
+    let up = Vec3 {
+        x: 0.0,
+        y: 1.0,
+        z: 0.0,
+    };
 
-    let red_mat = Material::new(Vec3::new(0.8, 0.2, 0.2 ), 0.8,  false, 0.0);
-    let white_mat = Material::new(Vec3::new(1.0, 1.0, 1.0 ), 0.1,  false, 0.0);
-    let red_mirror_mat = Material::new(Vec3::new(0.8, 0.2, 0.2 ), 1.0,  true, 0.5);
-    let blue_mirror_mat = Material::new(Vec3::new(0.2, 0.2, 0.8 ), 1.0,  true, 0.5);
-    let black_mat = Material::new(Vec3::new(0.1, 0.1, 0.1 ), 1.0,  false, 0.0);
-    let green_mat = Material::new(Vec3::new(0.2, 0.8, 0.2 ), 0.8,  false, 0.0);
+    let red_mat = Material::new(Vec3::new(0.8, 0.2, 0.2), 0.8, false, 0.0);
+    let white_mat = Material::new(Vec3::new(1.0, 1.0, 1.0), 0.1, false, 0.0);
+    let red_mirror_mat = Material::new(Vec3::new(0.8, 0.2, 0.2), 1.0, true, 0.5);
+    let blue_mirror_mat = Material::new(Vec3::new(0.2, 0.2, 0.8), 1.0, true, 0.5);
+    let black_mat = Material::new(Vec3::new(0.1, 0.1, 0.1), 1.0, false, 0.0);
+    let green_mat = Material::new(Vec3::new(0.2, 0.8, 0.2), 0.8, false, 0.0);
 
-    let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2 ), 0.2,  false, 0.96);
-    let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4 ), 0.2,  false, 0.96);
+    let dark_brown = Material::new(Vec3::new(0.5, 0.4, 0.2), 0.2, false, 0.96);
+    let light_brown = Material::new(Vec3::new(0.9, 0.7, 0.4), 0.2, false, 0.96);
 
-    let scene = SpeedField::new(
+    let scene = SpeedField::new(Union::new(
+        Union::new(
+            Sphere::new(8.0, Vec3::new(-5.0, -12.0, 0.0), red_mirror_mat),
+            Sphere::new(8.0, Vec3::new(25.0, -12.0, 10.0), blue_mirror_mat),
+        ),
         Union::new(
             Union::new(
-                Sphere::new(8.0, Vec3::new(-5.0, -12.0, 0.0 ), red_mirror_mat),
-                Sphere::new(8.0, Vec3::new(25.0, -12.0, 10.0 ), blue_mirror_mat ),
+                SmoothUnion::new(
+                    Sphere::new(8.0, Vec3::new(0.0, 11.0, 20.0), white_mat),
+                    SmoothUnion::new(
+                        Sphere::new(12.0, Vec3::new(0.0, -12.0, 20.0), white_mat),
+                        Sphere::new(10.0, Vec3::new(0.0, 0.0, 20.0), white_mat),
+                        0.3,
+                    ),
+                    0.3,
+                ),
+                Union::new(
+                    Sphere::new(1.0, Vec3::new(-3.0, 12.5, 12.7), black_mat),
+                    Sphere::new(1.0, Vec3::new(3.0, 12.5, 12.7), black_mat),
+                ),
             ),
             Union::new(
                 Union::new(
-                    SmoothUnion::new(
-                        Sphere::new( 8.0, Vec3::new(0.0, 11.0, 20.0 ), white_mat ),
-                        SmoothUnion::new(
-                            Sphere::new( 12.0, Vec3::new(0.0, -12.0, 20.0 ), white_mat ),
-                            Sphere::new( 10.0, Vec3::new(0.0, 0.0, 20.0 ), white_mat ),
-                            0.3,
-                        ),
-                        0.3,
+                    Cuboid::new(
+                        Vec3::new(1.0, 1.0, 1.0),
+                        Vec3::new(0.0, 0.0, 5.0),
+                        green_mat,
                     ),
-                    Union::new(
-                        Sphere::new( 1.0, Vec3::new(-3.0, 12.5, 12.7 ), black_mat ),
-                        Sphere::new( 1.0, Vec3::new(3.0, 12.5, 12.7 ), black_mat ),
-                    ),
+                    Sphere::new(3.0, Vec3::new(10.0, 5.0, 20.0), red_mat),
                 ),
-                Union::new(
-                    Union::new(
-                        Box::new(Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 0.0, 5.0), green_mat),
-                        Sphere::new( 3.0, Vec3::new(10.0, 5.0, 20.0 ), red_mat ),
+                Checker::new(
+                    Cuboid::new(
+                        Vec3::new(50.0, 1.0, 50.0),
+                        Vec3::new(0.0, -20.0, 0.0),
+                        dark_brown,
                     ),
-                    Checker::new(
-                        Box::new(Vec3::new(50.0, 1.0, 50.0), Vec3::new(0.0, -20.0, 0.0), dark_brown),
-                        0.1,
-                        light_brown,
-                    ),
+                    0.1,
+                    light_brown,
                 ),
             ),
-        )
-    );
-
+        ),
+    ));
 
     // let scene = CheckerFloor { height: 10.0, scale: 10.0, radius: 1.0, mat1: green_mat, mat2: red_mat};
     // let scene = Mandelbulb { power: 8, iterations: 12, scale: 1.0, pos: Vec3 {x: 0.0, y: 0.0, z: 0.0}};
@@ -287,39 +300,87 @@ fn main() {
             last_instant = now;
         }
 
-        window
-            .update_with_buffer(&buffer, WIDTH, HEIGHT)
-            .unwrap();
+        window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
 
         let look_dir = (look_pos - cam_pos).normalize();
         let screen_pos = cam_pos + look_dir * screen_distance;
         let screen_y = up - look_dir * look_dir.dot(up);
         let screen_x = look_dir.cross(up);
 
-        for y in 0..render_height {
-            for x in 0..render_width {
-                let px = get_pixel_colour(
-                    x,
-                    y,
-                    render_width,
-                    render_height,
-                    &scene,
-                    cam_pos,
-                    screen_x,
-                    screen_y,
-                    screen_pos,
-                    screen_width,
-                    light_pos,
-                );
+        let chunk_size: usize = 32;
+        let x_chunks = render_width / chunk_size;
+        let y_chunks = render_height / chunk_size;
+        let no_chunks = x_chunks * y_chunks;
 
+        let chunk_buffers: Vec<Vec<u32>> = (0..no_chunks)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let mut chunk_buffer = vec![0u32; chunk_size * chunk_size];
+                let chunk_x = (chunk_idx % x_chunks) * chunk_size;
+                let chunk_y = (chunk_idx / y_chunks) * chunk_size;
+                for y in 0..chunk_size {
+                    for x in 0..chunk_size {
+                        let px = get_pixel_colour(
+                            x + chunk_x,
+                            y + chunk_y,
+                            render_width,
+                            render_height,
+                            &scene,
+                            cam_pos,
+                            screen_x,
+                            screen_y,
+                            screen_pos,
+                            screen_width,
+                            light_pos,
+                        );
+                        chunk_buffer[y * chunk_size + x] = px;
+                    }
+                }
+                chunk_buffer
+            })
+            .collect();
+
+        for (chunk_idx, chunk_buffer) in chunk_buffers.iter().enumerate() {
+            let chunk_x = (chunk_idx % x_chunks) * chunk_size * screen_multiplier;
+            let chunk_y = (chunk_idx / x_chunks) * chunk_size * screen_multiplier;
+            for (pixel_idx, pixel) in chunk_buffer.iter().enumerate() {
+                let pixel_x = (pixel_idx % chunk_size) * screen_multiplier;
+                let pixel_y = (pixel_idx / chunk_size) * screen_multiplier;
                 for dy in 0..screen_multiplier {
                     for dx in 0..screen_multiplier {
-                        let idx = (y * screen_multiplier + dy) * WIDTH + x * screen_multiplier + dx;
-                        buffer[idx] = px;
+                        let screen_x = chunk_x + pixel_x + dx;
+                        let screen_y = chunk_y + pixel_y + dy;
+                        let idx = screen_y * WIDTH + screen_x;
+                        buffer[idx] = *pixel;
                     }
                 }
             }
         }
+
+        // for y in 0..render_height {
+        //     for x in 0..render_width {
+        //         let px = get_pixel_colour(
+        //             x,
+        //             y,
+        //             render_width,
+        //             render_height,
+        //             &scene,
+        //             cam_pos,
+        //             screen_x,
+        //             screen_y,
+        //             screen_pos,
+        //             screen_width,
+        //             light_pos,
+        //         );
+        //
+        //         for dy in 0..screen_multiplier {
+        //             for dx in 0..screen_multiplier {
+        //                 let idx = (y * screen_multiplier + dy) * WIDTH + x * screen_multiplier + dx;
+        //                 buffer[idx] = px;
+        //             }
+        //         }
+        //     }
+        // }
 
         let speed = 1.0; // world units per second
         if window.is_key_down(Key::W) {
@@ -386,10 +447,18 @@ fn main() {
             let mut phi = look_vector.z.atan2(look_vector.x);
             let mut theta = (look_vector.y / look_r).acos();
 
-            if right_key { phi += look_speed * dt; }
-            if left_key { phi -= look_speed * dt; }
-            if up_key { theta -= look_speed * dt; }
-            if down_key { theta += look_speed * dt; }
+            if right_key {
+                phi += look_speed * dt;
+            }
+            if left_key {
+                phi -= look_speed * dt;
+            }
+            if up_key {
+                theta -= look_speed * dt;
+            }
+            if down_key {
+                theta += look_speed * dt;
+            }
 
             let eps = 0.001;
             theta = theta.clamp(eps, PI - eps);
@@ -399,7 +468,8 @@ fn main() {
                 x: look_r * sin_t * phi.cos(),
                 y: look_r * theta.cos(),
                 z: look_r * sin_t * phi.sin(),
-            }.normalize();
+            }
+            .normalize();
 
             look_pos = cam_pos + new_v;
         }
