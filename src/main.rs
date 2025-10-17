@@ -192,7 +192,7 @@ fn main() {
         WindowOptions::default(),
     ).unwrap();
 
-    let mut SCREEN_MULTIPLIER: usize = 4;
+    let mut screen_multiplier: usize = 4;
 
     let mut last_instant = Instant::now();
     let mut frame_count = 0u32;
@@ -258,8 +258,8 @@ fn main() {
     // let scene = Mandelbulb { power: 8, iterations: 12, scale: 1.0, pos: Vec3 {x: 0.0, y: 0.0, z: 0.0}};
     let start = Instant::now();
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        let render_height = HEIGHT / SCREEN_MULTIPLIER;
-        let render_width = WIDTH / SCREEN_MULTIPLIER;
+        let render_height = HEIGHT / screen_multiplier;
+        let render_width = WIDTH / screen_multiplier;
 
         frame_count += 1;
         let now = Instant::now();
@@ -312,9 +312,9 @@ fn main() {
                     light_pos,
                 );
 
-                for dy in 0..SCREEN_MULTIPLIER {
-                    for dx in 0..SCREEN_MULTIPLIER {
-                        let idx = (y * SCREEN_MULTIPLIER + dy) * WIDTH + x * SCREEN_MULTIPLIER + dx;
+                for dy in 0..screen_multiplier {
+                    for dx in 0..screen_multiplier {
+                        let idx = (y * screen_multiplier + dy) * WIDTH + x * screen_multiplier + dx;
                         buffer[idx] = px;
                     }
                 }
@@ -362,16 +362,16 @@ fn main() {
         }
 
         if window.is_key_down(Key::Key1) {
-            SCREEN_MULTIPLIER = 1;
+            screen_multiplier = 1;
         }
         if window.is_key_down(Key::Key2) {
-            SCREEN_MULTIPLIER = 2;
+            screen_multiplier = 2;
         }
         if window.is_key_down(Key::Key3) {
-            SCREEN_MULTIPLIER = 4;
+            screen_multiplier = 4;
         }
         if window.is_key_down(Key::Key4) {
-            SCREEN_MULTIPLIER = 8;
+            screen_multiplier = 8;
         }
 
         let look_speed = 0.1;
